@@ -1,0 +1,47 @@
+# ==========================================
+# Variables d'Entorn i Secrets (MOLT IMPORTANT)
+# ==========================================
+.env
+*.env
+!.env.example
+
+# ==========================================
+# Entorns Virtuals de Python
+# ==========================================
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# ==========================================
+# Fitxers de Codi i Memòria Catxé de Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ==========================================
+# Coberta de Tests i Fitxers Temporals (PyTest)
+# ==========================================
+.pytest_cache/
+.coverage
+htmlcov/
+.nox/
+.hypothesis/
+
+# ==========================================
+# Fitxers de la IDE / Editor de Codi
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ==========================================
+# Fitxers de Sistema Operatiu
+# ==========================================
+.DS_Store
+Thumbs.db
