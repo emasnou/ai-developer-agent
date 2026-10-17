@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"name": "AI Development Agent",
+			"path": "./"
+		}
+	],
+	"settings": {
+		"editor.codeActionsOnSave": {
+			"source.fixAll": "explicit",
+			"source.organizeImports": "explicit",
+			"source.sortMembers": "explicit"
+		}
+	}
+}

@@ -41,6 +41,7 @@ ai-developer-agent/
 ├── .gitignore
 ├── README.md
 └── requirements.txt# ai-developer-agent
+
 ## 🚀 Configuració i Instal·lació
 
 ### 1. Requisits Previs
