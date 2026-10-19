@@ -188,4 +188,33 @@ class GitHubService:
             return review_history
         except GithubException as e:
             print(f"❌ Error en obtenir els comentaris de la PR #{pr_number}: {e}")
-            raise e 
+            raise e
+        
+    def get_repository_tree(self, ref: str = "main") -> list[str]:
+        """Obté la llista completa de camins (paths) de fitxers del repositori."""
+        try:
+            # 1. Obtenim la referència del commit/branca (SHA)
+            branch = self.repo.get_branch(ref)
+            sha = branch.commit.sha
+            
+            # 2. Obtenim l'arbre de Git passant el SHA com a primer argument
+            tree = self.repo.get_git_tree(sha, recursive=True)
+            
+            # 3. Filtrem per obtenir només fitxers de codi/configuració rellevants
+            file_paths = [
+                element.path for element in tree.tree 
+                if element.type == "blob" and not element.path.startswith(".")
+            ]
+            return file_paths
+        except GithubException as e:
+            print(f"❌ Error en obtenir l'arbre del repositori: {e}")
+            return []
+
+    def get_file_content(self, file_path: str, ref: str = "main") -> str:
+        """Obté el contingut de text d'un fitxer existent al repositori."""
+        try:
+            content_file = self.repo.get_contents(file_path, ref=ref)
+            return content_file.decoded_content.decode("utf-8")
+        except GithubException as e:
+            print(f"⚠️ No s'ha pogut llegir el fitxer {file_path}: {e}")
+            return "" 
