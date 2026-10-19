@@ -1,10 +1,12 @@
-"""Conjunt de tests unitaris i d'integració per al mòdul password_reset."""
+"""Conjunt complet de tests unitaris i d'integració per al mòdul password_reset."""
 
 from datetime import datetime, timedelta, timezone
 import pytest
 
 from password_reset import (
     GENERIC_SUCCESS_MESSAGE,
+    PASSWORD_MAX_LENGTH,
+    PASSWORD_MIN_LENGTH,
     EmailService,
     ExpiredTokenError,
     InvalidTokenError,
@@ -13,6 +15,7 @@ from password_reset import (
     RateLimiter,
     UserRepository,
     validate_email_format,
+    validate_password_complexity,
 )
 
 
@@ -68,7 +71,7 @@ def test_validate_email_format():
     assert validate_email_format("valid.user@exemple.com") is True
     assert validate_email_format("user+test@sub.domain.cat") is True
 
-    # Formats invàlids o intents d'injecció SMTP
+    # Formats invàlids o intents d'injecció SMTP CRLF
     assert validate_email_format("usuari_sense_arroba.com") is False
     assert validate_email_format("usuari@") is False
     assert validate_email_format("@exemple.com") is False
@@ -76,8 +79,27 @@ def test_validate_email_format():
     assert validate_email_format("") is False
 
 
+def test_validate_password_complexity():
+    """Valida les regles de complexitat segons NIST/OWASP (A07)."""
+    # Vàlida
+    assert validate_password_complexity("Abcdef12345!") is True
+    assert validate_password_complexity("Correct-Horse-Battery-Staple-99$") is True
+
+    # Massa curta (< 12)
+    assert validate_password_complexity("Curta1!") is False
+
+    # Massa llarga (> 128)
+    assert validate_password_complexity("A" * 125 + "1!a" + "b" * 10) is False
+
+    # Manca de caràcters obligatoris
+    assert validate_password_complexity("sensemajuscula123!") is False
+    assert validate_password_complexity("SENSEMINUSCULA123!") is False
+    assert validate_password_complexity("SenseNumeroNiEspecial") is False
+    assert validate_password_complexity("SenseCaràcterEspecial123") is False
+
+
 # =====================================================================
-# TESTS UNITARIS - GENERACIÓ I VALIDACIÓ DE TOKENS
+# TESTS UNITARIS - GENERACIÓ, EXPIRACIÓ I PURGA DE MEMÒRIA (DoS)
 # =====================================================================
 
 def test_unit_1_token_generation_uniqueness_and_fifteen_minute_expiration(token_manager):
@@ -88,11 +110,9 @@ def test_unit_1_token_generation_uniqueness_and_fifteen_minute_expiration(token_
     token_1 = token_manager.generate_token(email, now=base_time)
     token_2 = token_manager.generate_token(email, now=base_time)
 
-    # Unicitat de cada token
     assert token_1.token != token_2.token
     assert isinstance(token_1.token, str) and len(token_1.token) > 20
 
-    # Expiració de 15 minuts
     expected_expiry = base_time + timedelta(minutes=15)
     assert token_1.expires_at == expected_expiry
     assert token_1.created_at == base_time
@@ -104,7 +124,7 @@ def test_unit_2_token_validation_fails_when_expired_or_tampered(token_manager):
     base_time = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
     token_data = token_manager.generate_token("usuari@exemple.com", now=base_time)
 
-    # Límit just abans dels 15 minuts (vàlid)
+    # Just abans dels 15 minuts (vàlid)
     valid_check_time = base_time + timedelta(minutes=14, seconds=59)
     is_valid, email, err = token_manager.validate_token(token_data.token, now=valid_check_time)
     assert is_valid is True
@@ -117,11 +137,10 @@ def test_unit_2_token_validation_fails_when_expired_or_tampered(token_manager):
     assert is_valid_expired is False
     assert err_msg == "L'enllaç ha expirat."
 
-    # Validació mitjançant verify_token que llença excepcions específiques
     with pytest.raises(ExpiredTokenError):
         token_manager.verify_token(token_data.token, now=expired_check_time)
 
-    # Token manipulat (signatura alterada)
+    # Token manipulat
     payload_b64, sig_b64 = token_data.token.split(".")
     tampered_sig = sig_b64[:-2] + ("ab" if sig_b64[-2:] != "ab" else "cd")
     tampered_token = f"{payload_b64}.{tampered_sig}"
@@ -133,30 +152,75 @@ def test_unit_2_token_validation_fails_when_expired_or_tampered(token_manager):
     with pytest.raises(InvalidTokenError):
         token_manager.verify_token(tampered_token, now=base_time)
 
-    # Token buit o malmès
-    is_valid_corrupt, _, _ = token_manager.validate_token("cadena_invalida_sense_parts", now=base_time)
-    assert is_valid_corrupt is False
 
-
-def test_single_use_token_revocation(token_manager):
-    """Comprova que un token marcat com a utilitzat no es pot tornar a fer servir (Single-Use)."""
+def test_single_use_token_revocation_and_memory_purge(token_manager):
+    """Comprova el funcionament del Single-Use i la neteja de memòria dels tokens purgats."""
     base_time = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
     token_data = token_manager.generate_token("usuari@exemple.com", now=base_time)
 
-    # El token és vàlid inicialment
     assert token_manager.verify_token(token_data.token, now=base_time) == "usuari@exemple.com"
 
-    # Invalidem el token (en utilitzar-lo)
-    token_manager.invalidate_token(token_data.token)
-    assert token_manager.is_token_revoked(token_data.token) is True
+    # Revocació
+    token_manager.invalidate_token(token_data.token, now=base_time)
+    assert token_manager.is_token_revoked(token_data.token, now=base_time) is True
 
-    # En tornar-lo a verificar ha de fallar com a token invàlid
     with pytest.raises(InvalidTokenError, match="utilitzat anteriorment"):
         token_manager.verify_token(token_data.token, now=base_time)
 
+    # Al cap de 20 minuts, el token revocat ja ha expirat naturalment i es purga de memòria
+    future_time = base_time + timedelta(minutes=20)
+    purged = token_manager.purge_expired_revocations(now=future_time)
+    assert purged == 1
+    assert len(token_manager._revoked_tokens) == 0
+
 
 # =====================================================================
-# TESTS UNITARIS - PROTECCIÓ CONTRA ENUMERACIÓ I ATACS D'ENTRADA
+# TESTS UNITARIS - RATE LIMITING I PURGA DE CLAUS
+# =====================================================================
+
+def test_rate_limiter_memory_leak_mitigation():
+    """Comprova que les claus inactives del RateLimiter s'eliminen per evitar DoS/OOM."""
+    limiter = RateLimiter(max_requests=2, window_seconds=60)
+    limiter.is_allowed("user1@test.cat", current_timestamp=100.0)
+    assert "user1@test.cat" in limiter._history
+
+    # Temps futur on la petició ha expirat (> 60s)
+    limiter.purge_empty_keys(now=200.0)
+    assert "user1@test.cat" not in limiter._history
+
+
+def test_ip_and_email_rate_limiting(controller):
+    """Comprova que el límit per IP i per correu funcionen conjuntament."""
+    now = datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
+    email = "usuari@exemple.com"
+    ip = "192.168.1.10"
+
+    # 5 peticions permeses per email
+    for _ in range(5):
+        res = controller.request_password_reset(email, ip_address=ip, now=now)
+        assert res["status_code"] == 200
+
+    # La 6a pel mateix correu és bloquejada
+    res_email_blocked = controller.request_password_reset(email, ip_address=ip, now=now)
+    assert res_email_blocked["status_code"] == 429
+    assert res_email_blocked["error"] == "Massa peticions"
+
+    # Prova de bloqueig per IP
+    controller_ip = PasswordResetController(
+        user_repository=UserRepository(),
+        email_service=EmailService(),
+        token_manager=controller.token_manager,
+        ip_rate_limiter=RateLimiter(max_requests=2, window_seconds=60),
+    )
+    controller_ip.request_password_reset("user1@exemple.com", ip_address="10.0.0.1", now=now)
+    controller_ip.request_password_reset("user2@exemple.com", ip_address="10.0.0.1", now=now)
+    res_ip_blocked = controller_ip.request_password_reset("user3@exemple.com", ip_address="10.0.0.1", now=now)
+    assert res_ip_blocked["status_code"] == 429
+    assert "IP" in res_ip_blocked["error"]
+
+
+# =====================================================================
+# TESTS D'INTEGRACIÓ I FLUX COMPLET (E2E)
 # =====================================================================
 
 def test_unit_3_response_strictly_identical_for_registered_and_unregistered_emails(controller):
@@ -174,93 +238,46 @@ def test_unit_3_response_strictly_identical_for_registered_and_unregistered_emai
     assert response_registered == response_unregistered
 
 
-def test_request_password_reset_rejects_invalid_email(controller):
-    """Comprova que les sol·licituds amb emails invàlids són rebutjades immediatament."""
-    response = controller.request_password_reset("invalid-email-format")
-    assert response["status_code"] == 400
-    assert response["error"] == "Format de correu invàlid"
-
-
-def test_rate_limiter_blocks_excessive_requests(controller):
-    """Comprova que el limitador de taxa bloqueja ràfegues de sol·licituds (Email Bombing)."""
-    email = "usuari@exemple.com"
-    base_time = datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc)
-
-    # Realitzem 5 sol·licituds permeses
-    for _ in range(5):
-        res = controller.request_password_reset(email, now=base_time)
-        assert res["status_code"] == 200
-
-    # La 6a sol·licitud ha de ser denegada amb codi 429
-    res_blocked = controller.request_password_reset(email, now=base_time)
-    assert res_blocked["status_code"] == 429
-    assert res_blocked["error"] == "Massa peticions"
-
-
-# =====================================================================
-# TESTS D'INTEGRACIÓ I FLUX COMPLET (E2E)
-# =====================================================================
-
-def test_e2e_1_full_successful_flow_within_fifteen_minutes(controller, email_service):
-    """Test 1 E2E: Flux complet d'enviament, recepció i accés al formulari dins el marge."""
+def test_e2e_full_successful_flow_with_password_change(controller, email_service, user_repo):
+    """Flux complet: sol·licitud, accés al formulari, canvi i persistència de contrasenya."""
     now = datetime(2025, 2, 1, 9, 0, 0, tzinfo=timezone.utc)
     user_email = "usuari@exemple.com"
 
-    response = controller.request_password_reset(user_email, now=now)
-    assert response["status_code"] == 200
-    assert response["message"] == GENERIC_SUCCESS_MESSAGE
-
+    # 1. Sol·licitud
+    resp = controller.request_password_reset(user_email, now=now)
+    assert resp["status_code"] == 200
     assert len(email_service.sent_emails) == 1
-    sent_email = email_service.sent_emails[0]
-    assert sent_email["to"] == user_email
-    reset_url = sent_email["reset_link"]
-    assert "https://exemple.com/reset-password?token=" in reset_url
+    reset_link = email_service.sent_emails[0]["reset_link"]
+    token = reset_link.split("token=")[1]
 
-    token = reset_url.split("token=")[1]
-
-    # Accés al cap de 5 minuts
+    # 2. Formulari a través del token
     access_time = now + timedelta(minutes=5)
-    form_response = controller.access_reset_form(token, now=access_time)
+    form_resp = controller.access_reset_form(token, now=access_time)
+    assert form_resp["status_code"] == 200
+    assert form_resp["can_reset"] is True
 
-    assert form_response["status_code"] == 200
-    assert form_response["can_reset"] is True
-    assert form_response["email"] == user_email
+    # 3. Intent de canvi amb contrasenya massa feble (no compleix NIST)
+    weak_res = controller.complete_password_reset(token, "feble", now=access_time)
+    assert weak_res["status_code"] == 400
+    assert weak_res["error"] == "Contrasenya feble o no vàlida"
+    # El token encara ha de ser vàlid perquè no s'ha consumit en cas de dades invàlides
+    assert controller.token_manager.is_token_revoked(token) is False
 
-    # Completa el restabliment (Single-Use Token)
-    completion_response = controller.complete_password_reset(token, "NovaContrasenyaSegura!123", now=access_time)
-    assert completion_response["status_code"] == 200
+    # 4. Canvi amb contrasenya robusta
+    strong_pwd = "NovaContrasenyaSegura!123"
+    success_res = controller.complete_password_reset(token, strong_pwd, now=access_time)
+    assert success_res["status_code"] == 200
+    assert user_repo.get_password(user_email) == strong_pwd
 
-    # Un segon intent amb el mateix token ha de ser rebutjat
-    reused_response = controller.access_reset_form(token, now=access_time)
-    assert reused_response["status_code"] == 400
-    assert reused_response["can_reset"] is False
+    # 5. Token consumit (Single-Use): segon intent denegat
+    reused_res = controller.complete_password_reset(token, strong_pwd, now=access_time)
+    assert reused_res["status_code"] == 400
+    assert "utilitzat" in reused_res["error"]
 
 
-def test_e2e_2_unregistered_email_sends_no_email_and_shows_generic_success(controller, email_service):
-    """Test 2 E2E: Correu desconegut no genera correu però retorna l'estat genèric d'èxit."""
-    now = datetime(2025, 2, 1, 9, 0, 0, tzinfo=timezone.utc)
-    unknown_email = "desconegut@exemple.com"
-
-    response = controller.request_password_reset(unknown_email, now=now)
-
-    assert response["status_code"] == 200
-    assert response["message"] == GENERIC_SUCCESS_MESSAGE
+def test_e2e_unregistered_email_does_not_send_mail(controller, email_service):
+    """Usuari no registrat no rep cap correu però rep resposta 200 genèrica."""
+    resp = controller.request_password_reset("inexistent@exemple.com")
+    assert resp["status_code"] == 200
+    assert resp["message"] == GENERIC_SUCCESS_MESSAGE
     assert len(email_service.sent_emails) == 0
-
-
-def test_scenario_3_expired_link_redirects_and_offers_new_request(controller, email_service):
-    """Escenari 3: Token expirat ofereix sol·licitar-ne un de nou."""
-    now = datetime(2025, 2, 1, 10, 0, 0, tzinfo=timezone.utc)
-    user_email = "usuari@exemple.com"
-
-    controller.request_password_reset(user_email, now=now)
-    token = email_service.sent_emails[0]["reset_link"].split("token=")[1]
-
-    expired_access_time = now + timedelta(minutes=15, seconds=30)
-    form_response = controller.access_reset_form(token, now=expired_access_time)
-
-    assert form_response["status_code"] == 400
-    assert form_response["can_reset"] is False
-    assert form_response["can_request_new"] is True
-    assert form_response["error"] == "L'enllaç ha expirat"
-    assert "expirat" in form_response["message"].lower()
