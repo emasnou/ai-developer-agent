@@ -3,8 +3,8 @@
 Aquest mòdul implementa la generació de tokens signats amb HMAC-SHA256, protecció
 contra atacs de canal lateral (timing attacks), mitigació d'enumeració d'usuaris,
 validació estricta d'entrades (OWASP Top 10), persistència de claus mitjançant derivació
-segura scrypt, neteja controlada de memòria contra DoS, limitació de taxa thread-safe
-i compliment estricte de les directrius NIST i OWASP.
+segura scrypt, neteja controlada de memòria contra DoS, consum atòmic contra TOCTOU,
+limitació de taxa thread-safe i compliment estricte de les directrius NIST i OWASP.
 """
 
 from __future__ import annotations
@@ -133,6 +133,7 @@ class PasswordResetTokenManager:
         self.expiration_minutes: int = expiration_minutes
         self._revoked_tokens: Dict[str, int] = {}
         self._lock: threading.Lock = threading.Lock()
+        self._last_purge_time: float = 0.0
 
     @staticmethod
     def _b64_encode(data: bytes) -> str:
@@ -176,7 +177,6 @@ class PasswordResetTokenManager:
             now_dt = now_dt.replace(tzinfo=timezone.utc)
 
         expires_at = now_dt + timedelta(minutes=self.expiration_minutes)
-
         payload = {
             "email": email,
             "nonce": secrets.token_hex(16),
@@ -184,17 +184,10 @@ class PasswordResetTokenManager:
             "exp": int(expires_at.timestamp()),
         }
 
-        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
-        payload_b64 = self._b64_encode(payload_bytes)
+        payload_b64 = self._b64_encode(json.dumps(payload, sort_keys=True).encode("utf-8"))
+        sig = hmac.new(self._secret_key, payload_b64.encode("utf-8"), hashlib.sha256).digest()
+        token_str = f"{payload_b64}.{self._b64_encode(sig)}"
 
-        signature = hmac.new(
-            self._secret_key,
-            payload_b64.encode("utf-8"),
-            hashlib.sha256,
-        ).digest()
-        signature_b64 = self._b64_encode(signature)
-
-        token_str = f"{payload_b64}.{signature_b64}"
         return ResetTokenData(
             token=token_str,
             email=email,
@@ -222,7 +215,21 @@ class PasswordResetTokenManager:
             ]
             for tok in expired_tokens:
                 del self._revoked_tokens[tok]
+            self._last_purge_time = now_ts
             return len(expired_tokens)
+
+    def _maybe_auto_purge(self, now_ts: int) -> None:
+        """Executa una purga de memòria amortitzada si ha transcorregut la finestra.
+
+        Args:
+            now_ts: Marca temporal actual en segons Unix.
+        """
+        purge_interval = self.expiration_minutes * 60
+        if now_ts - self._last_purge_time > purge_interval:
+            stale_keys = [tok for tok, exp in self._revoked_tokens.items() if exp <= now_ts]
+            for tok in stale_keys:
+                self._revoked_tokens.pop(tok, None)
+            self._last_purge_time = now_ts
 
     def invalidate_token(self, token: str, now: Optional[datetime] = None) -> None:
         """Marca un token com a utilitzat per impedir atacs de repetició (Single-Use).
@@ -231,17 +238,21 @@ class PasswordResetTokenManager:
             token: Token criptogràfic a revocar.
             now: Marca temporal opcional de revocació.
         """
-        exp_ts = 0
+        now_dt = now or datetime.now(timezone.utc)
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=timezone.utc)
+        now_ts = int(now_dt.timestamp())
+
         try:
             payload_part = token.split(".")[0]
             payload_dict = json.loads(self._b64_decode(payload_part).decode("utf-8"))
             exp_ts = int(payload_dict.get("exp", 0))
         except Exception:
-            now_dt = now or datetime.now(timezone.utc)
-            exp_ts = int(now_dt.timestamp()) + (self.expiration_minutes * 60)
+            exp_ts = now_ts + (self.expiration_minutes * 60)
 
         with self._lock:
             self._revoked_tokens[token] = exp_ts
+            self._maybe_auto_purge(now_ts)
 
     def is_token_revoked(self, token: str, now: Optional[datetime] = None) -> bool:
         """Comprova si el token ha estat revocat o consumit prèviament.
@@ -267,6 +278,80 @@ class PasswordResetTokenManager:
                 return False
             return True
 
+    def _parse_and_verify_signature(self, token: str) -> Dict[str, Any]:
+        """Verifica la signatura criptogràfica del token i en deserialitza el payload.
+
+        Args:
+            token: Cadena de text compacta del token.
+
+        Returns:
+            Dict[str, Any]: Payload JSON deserialitzat.
+
+        Raises:
+            InvalidTokenError: Si el format, signatura o dades són incorrectes.
+        """
+        if not token or not isinstance(token, str) or "." not in token:
+            raise InvalidTokenError("Format de token incorrecte o incomplet.")
+
+        parts = token.split(".")
+        if len(parts) != 2:
+            raise InvalidTokenError("Format de token incorrecte.")
+
+        payload_b64, signature_b64 = parts[0], parts[1]
+        try:
+            expected_sig = hmac.new(
+                self._secret_key,
+                payload_b64.encode("utf-8"),
+                hashlib.sha256,
+            ).digest()
+            actual_sig = self._b64_decode(signature_b64)
+            if not hmac.compare_digest(expected_sig, actual_sig):
+                raise InvalidTokenError("La signatura del token ha estat manipulada o és invàlida.")
+
+            payload_bytes = self._b64_decode(payload_b64)
+            return json.loads(payload_bytes.decode("utf-8"))
+        except InvalidTokenError:
+            raise
+        except Exception as exc:
+            raise InvalidTokenError("No s'ha pogut desxifrar o interpretar el token.") from exc
+
+    def _check_validity_unlocked(self, token: str, now: Optional[datetime] = None) -> str:
+        """Comprova vigència i revocació d'un token sense adquirir el lock intern.
+
+        Args:
+            token: Token compacte.
+            now: Data/hora opcional de validació.
+
+        Returns:
+            str: Correu electrònic associat al token.
+
+        Raises:
+            InvalidTokenError: Si el token és invàlid o està revocat.
+            ExpiredTokenError: Si el token ha caducat.
+        """
+        payload = self._parse_and_verify_signature(token)
+
+        now_dt = now or datetime.now(timezone.utc)
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=timezone.utc)
+        now_ts = int(now_dt.timestamp())
+
+        exp_revoked = self._revoked_tokens.get(token)
+        if exp_revoked is not None:
+            if exp_revoked > now_ts:
+                raise InvalidTokenError("El token ja ha estat utilitzat anteriorment.")
+            del self._revoked_tokens[token]
+
+        exp_timestamp = payload.get("exp")
+        email = payload.get("email")
+        if not exp_timestamp or not email:
+            raise InvalidTokenError("Dades del token incompletes.")
+
+        if now_ts > exp_timestamp:
+            raise ExpiredTokenError("L'enllaç ha expirat.")
+
+        return email
+
     def verify_token(self, token: str, now: Optional[datetime] = None) -> str:
         """Verifica la integritat, vigència i unicitat del token.
 
@@ -281,49 +366,39 @@ class PasswordResetTokenManager:
             InvalidTokenError: Si el format és incorrecte, la signatura no coincideix o ha estat revocat.
             ExpiredTokenError: Si el token ha superat el temps límit de vigència.
         """
-        if not token or not isinstance(token, str) or "." not in token:
-            raise InvalidTokenError("Format de token incorrecte o incomplet.")
+        with self._lock:
+            return self._check_validity_unlocked(token, now=now)
 
-        parts = token.split(".")
-        if len(parts) != 2:
-            raise InvalidTokenError("Format de token incorrecte.")
+    def consume_token(self, token: str, now: Optional[datetime] = None) -> str:
+        """Verifica i revoca el token atòmicament prevenint condicions de cursa TOCTOU.
 
-        payload_b64, signature_b64 = parts[0], parts[1]
+        Args:
+            token: Token compacte a verificar i invalidar.
+            now: Marca temporal opcional.
 
-        try:
-            expected_signature = hmac.new(
-                self._secret_key,
-                payload_b64.encode("utf-8"),
-                hashlib.sha256,
-            ).digest()
-            actual_signature = self._b64_decode(signature_b64)
-            if not hmac.compare_digest(expected_signature, actual_signature):
-                raise InvalidTokenError("La signatura del token ha estat manipulada o és invàlida.")
+        Returns:
+            str: Correu electrònic validat del token.
 
-            payload_bytes = self._b64_decode(payload_b64)
-            payload: Dict[str, Any] = json.loads(payload_bytes.decode("utf-8"))
-        except InvalidTokenError:
-            raise
-        except Exception as exc:
-            raise InvalidTokenError("No s'ha pogut desxifrar o interpretar el token.") from exc
-
-        if self.is_token_revoked(token, now=now):
-            raise InvalidTokenError("El token ja ha estat utilitzat anteriorment.")
-
-        exp_timestamp = payload.get("exp")
-        email = payload.get("email")
-
-        if not exp_timestamp or not email:
-            raise InvalidTokenError("Dades del token incompletes.")
-
+        Raises:
+            InvalidTokenError: Si el format és invàlid, manipulat o ja s'ha utilitzat.
+            ExpiredTokenError: Si el token ha caducat.
+        """
         now_dt = now or datetime.now(timezone.utc)
         if now_dt.tzinfo is None:
             now_dt = now_dt.replace(tzinfo=timezone.utc)
+        now_ts = int(now_dt.timestamp())
 
-        if int(now_dt.timestamp()) > exp_timestamp:
-            raise ExpiredTokenError("L'enllaç ha expirat.")
+        with self._lock:
+            email = self._check_validity_unlocked(token, now=now_dt)
+            try:
+                payload_dict = json.loads(self._b64_decode(token.split(".")[0]).decode("utf-8"))
+                exp_ts = int(payload_dict.get("exp", now_ts + (self.expiration_minutes * 60)))
+            except Exception:
+                exp_ts = now_ts + (self.expiration_minutes * 60)
 
-        return email
+            self._revoked_tokens[token] = exp_ts
+            self._maybe_auto_purge(now_ts)
+            return email
 
     def validate_token(
         self, token: str, now: Optional[datetime] = None
@@ -532,13 +607,14 @@ class RateLimiter:
         """
         current_time = now if now is not None else time.time()
         with self._lock:
+            cutoff = current_time - self.window_seconds
             stale_keys = []
             for identifier, records in list(self._history.items()):
-                active_records = [t for t in records if current_time - t < self.window_seconds]
-                if not active_records:
+                active = [t for t in records if t > cutoff]
+                if not active:
                     stale_keys.append(identifier)
                 else:
-                    self._history[identifier] = active_records
+                    self._history[identifier] = active
             for k in stale_keys:
                 self._history.pop(k, None)
 
@@ -553,10 +629,11 @@ class RateLimiter:
             bool: True si la petició és admesa, False si s'ha superat el límit.
         """
         now = current_timestamp if current_timestamp is not None else time.time()
+        cutoff = now - self.window_seconds
 
         with self._lock:
             records = self._history.get(identifier, [])
-            valid_records = [t for t in records if now - t < self.window_seconds]
+            valid_records = [t for t in records if t > cutoff]
 
             if len(valid_records) >= self.max_requests:
                 self._history[identifier] = valid_records
@@ -565,11 +642,12 @@ class RateLimiter:
             valid_records.append(now)
             self._history[identifier] = valid_records
 
-            # Purga periòdica controlada per amortitzar cost computacional
             if now - self._last_global_purge > self.window_seconds:
                 self._last_global_purge = now
-                stale = [k for k, v in self._history.items() if not [t for t in v if now - t < self.window_seconds]]
-                for k in stale:
+                empty_keys = [
+                    k for k, v in list(self._history.items()) if not any(t > cutoff for t in v)
+                ]
+                for k in empty_keys:
                     self._history.pop(k, None)
 
             return True
@@ -578,8 +656,7 @@ class RateLimiter:
 class PasswordResetController:
     """Controlador per a la gestió de sol·licituds i validació d'enllaços de recuperació."""
 
-    def __init__(
-        self,
+    def __init__(self,
         user_repository: UserRepository,
         email_service: EmailService,
         token_manager: PasswordResetTokenManager,
@@ -619,6 +696,33 @@ class PasswordResetController:
             thread = threading.Thread(target=task, daemon=True)
             thread.start()
 
+    def _check_rate_limits(
+        self, email: str, ip_address: Optional[str], timestamp: float
+    ) -> Optional[Dict[str, Any]]:
+        """Valida els límits de taxa per IP i correu electrònic.
+
+        Args:
+            email: Correu electrònic normalitzat.
+            ip_address: Adreça IP opcional del client.
+            timestamp: Marca temporal en segons de la petició.
+
+        Returns:
+            Optional[Dict[str, Any]]: Resposta d'error 429 si se superen límits, None si és admesa.
+        """
+        if ip_address and not self.ip_rate_limiter.is_allowed(ip_address, current_timestamp=timestamp):
+            return {
+                "status_code": 429,
+                "error": "Massa peticions des d'aquesta IP",
+                "message": "S'ha superat el límit de peticions permès per a la vostra adreça IP.",
+            }
+        if not self.rate_limiter.is_allowed(email, current_timestamp=timestamp):
+            return {
+                "status_code": 429,
+                "error": "Massa peticions",
+                "message": "S'han superat el nombre de peticions permeses. Torneu-ho a provar més tard.",
+            }
+        return None
+
     def request_password_reset(
         self,
         email: str,
@@ -645,26 +749,13 @@ class PasswordResetController:
         normalized_email = email.strip().lower()
         current_ts = now.timestamp() if now else time.time()
 
-        if ip_address and not self.ip_rate_limiter.is_allowed(ip_address, current_timestamp=current_ts):
-            return {
-                "status_code": 429,
-                "error": "Massa peticions des d'aquesta IP",
-                "message": "S'ha superat el límit de peticions permès per a la vostra adreça IP.",
-            }
+        rate_limit_error = self._check_rate_limits(normalized_email, ip_address, current_ts)
+        if rate_limit_error:
+            return rate_limit_error
 
-        if not self.rate_limiter.is_allowed(normalized_email, current_timestamp=current_ts):
-            return {
-                "status_code": 429,
-                "error": "Massa peticions",
-                "message": "S'han superat el nombre de peticions permeses. Torneu-ho a provar més tard.",
-            }
-
-        # Equapara càrrega criptogràfica sempre
         token_data = self.token_manager.generate_token(normalized_email, now=now)
-
         if self.user_repo.exists(normalized_email):
             reset_link = f"{self.base_url}{token_data.token}"
-            # Mitigació del canal lateral d'I/O via tasca en segon pla
             self._dispatch_task(
                 lambda: self.email_service.send_reset_email(normalized_email, reset_link)
             )
@@ -712,10 +803,10 @@ class PasswordResetController:
     def complete_password_reset(
         self, token: str, new_password: str, now: Optional[datetime] = None
     ) -> Dict[str, Any]:
-        """Completa el restabliment avaluant la complexitat i consumint el token d'un sol ús.
+        """Completa el restabliment avaluant la complexitat i consumint el token atòmicament.
 
         Args:
-            token: Token que serà verificat i posteriorment revocat.
+            token: Token que serà verificat i revocat atòmicament.
             new_password: Nova contrasenya escollida.
             now: Marca temporal opcional.
 
@@ -733,7 +824,7 @@ class PasswordResetController:
             }
 
         try:
-            email = self.token_manager.verify_token(token, now=now)
+            email = self.token_manager.consume_token(token, now=now)
         except TokenValidationError as err:
             return {
                 "status_code": 400,
@@ -748,8 +839,6 @@ class PasswordResetController:
                 "error": "Usuari no trobat",
                 "message": "No s'ha trobat cap compte d'usuari vinculat al correu del token.",
             }
-
-        self.token_manager.invalidate_token(token, now=now)
 
         return {
             "status_code": 200,
