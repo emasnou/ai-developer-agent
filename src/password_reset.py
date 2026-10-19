@@ -2,8 +2,9 @@
 
 Aquest mòdul implementa la generació de tokens signats amb HMAC-SHA256, protecció
 contra atacs de canal lateral (timing attacks), mitigació d'enumeració d'usuaris,
-validació estricta d'entrades (OWASP Top 10), neteja periòdica de memòria contra DoS
-i gestió robusta de contrasenyes segons les directrius de seguretat NIST/OWASP.
+validació estricta d'entrades (OWASP Top 10), persistència de claus mitjançant derivació
+segura scrypt, neteja controlada de memòria contra DoS, limitació de taxa thread-safe
+i compliment estricte de les directrius NIST i OWASP.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 GENERIC_SUCCESS_MESSAGE: str = (
     "Si el correu està registrat, rebràs instruccions per restablir la contrasenya"
@@ -130,8 +131,8 @@ class PasswordResetTokenManager:
             )
         self._secret_key: bytes = resolved_key.encode("utf-8")
         self.expiration_minutes: int = expiration_minutes
-        # Emmagatzema token -> timestamp d'expiració per permetre purga de memòria (mitigació OOM / DoS)
         self._revoked_tokens: Dict[str, int] = {}
+        self._lock: threading.Lock = threading.Lock()
 
     @staticmethod
     def _b64_encode(data: bytes) -> str:
@@ -202,9 +203,7 @@ class PasswordResetTokenManager:
         )
 
     def purge_expired_revocations(self, now: Optional[datetime] = None) -> int:
-        """Purga de la memòria aquells tokens revocats que ja han superat la seva caducitat natural.
-
-        Evita el creixement desmesurat de memòria RAM (Memory Leak / DoS).
+        """Purga de la memòria els tokens revocats que han superat la seva caducitat natural.
 
         Args:
             now: Marca temporal opcional per al càlcul de vigència.
@@ -217,12 +216,13 @@ class PasswordResetTokenManager:
             now_dt = now_dt.replace(tzinfo=timezone.utc)
         now_ts = int(now_dt.timestamp())
 
-        expired_tokens = [
-            tok for tok, exp_ts in self._revoked_tokens.items() if exp_ts <= now_ts
-        ]
-        for tok in expired_tokens:
-            del self._revoked_tokens[tok]
-        return len(expired_tokens)
+        with self._lock:
+            expired_tokens = [
+                tok for tok, exp_ts in self._revoked_tokens.items() if exp_ts <= now_ts
+            ]
+            for tok in expired_tokens:
+                del self._revoked_tokens[tok]
+            return len(expired_tokens)
 
     def invalidate_token(self, token: str, now: Optional[datetime] = None) -> None:
         """Marca un token com a utilitzat per impedir atacs de repetició (Single-Use).
@@ -231,7 +231,6 @@ class PasswordResetTokenManager:
             token: Token criptogràfic a revocar.
             now: Marca temporal opcional de revocació.
         """
-        self.purge_expired_revocations(now=now)
         exp_ts = 0
         try:
             payload_part = token.split(".")[0]
@@ -241,7 +240,8 @@ class PasswordResetTokenManager:
             now_dt = now or datetime.now(timezone.utc)
             exp_ts = int(now_dt.timestamp()) + (self.expiration_minutes * 60)
 
-        self._revoked_tokens[token] = exp_ts
+        with self._lock:
+            self._revoked_tokens[token] = exp_ts
 
     def is_token_revoked(self, token: str, now: Optional[datetime] = None) -> bool:
         """Comprova si el token ha estat revocat o consumit prèviament.
@@ -251,10 +251,21 @@ class PasswordResetTokenManager:
             now: Marca temporal opcional.
 
         Returns:
-            bool: True si el token és a la memòria cau de revocació, False en cas contrari.
+            bool: True si el token és a la memòria de revocació activa, False altrament.
         """
-        self.purge_expired_revocations(now=now)
-        return token in self._revoked_tokens
+        now_dt = now or datetime.now(timezone.utc)
+        if now_dt.tzinfo is None:
+            now_dt = now_dt.replace(tzinfo=timezone.utc)
+        now_ts = int(now_dt.timestamp())
+
+        with self._lock:
+            exp_ts = self._revoked_tokens.get(token)
+            if exp_ts is None:
+                return False
+            if exp_ts <= now_ts:
+                del self._revoked_tokens[token]
+                return False
+            return True
 
     def verify_token(self, token: str, now: Optional[datetime] = None) -> str:
         """Verifica la integritat, vigència i unicitat del token.
@@ -325,25 +336,19 @@ class PasswordResetTokenManager:
 
         Returns:
             Tuple[bool, Optional[str], Optional[str]]: Tupla amb (és_vàlid, correu, missatge_error).
+                Si el token ha expirat o és invàlid, mai retorna el correu per evitar fuites d'informació.
         """
         try:
             email = self.verify_token(token, now=now)
             return True, email, None
         except ExpiredTokenError:
-            email = None
-            try:
-                payload_bytes = self._b64_decode(token.split(".")[0])
-                payload = json.loads(payload_bytes.decode("utf-8"))
-                email = payload.get("email")
-            except Exception:
-                pass
-            return False, email, "L'enllaç ha expirat."
+            return False, None, "L'enllaç ha expirat."
         except InvalidTokenError as err:
             return False, None, str(err)
 
 
 class UserRepository:
-    """Repositori d'usuaris en memòria amb gestió de contrasenyes."""
+    """Repositori d'usuaris en memòria amb gestió segura de contrasenyes mitjançant scrypt."""
 
     def __init__(self, initial_users: Optional[List[str]] = None):
         """Inicialitza el repositori amb un conjunt d'usuaris opcional.
@@ -351,10 +356,31 @@ class UserRepository:
         Args:
             initial_users: Llista opcional de correus electrònics a registrar inicialment.
         """
-        self._users: Dict[str, Dict[str, Any]] = {
-            email.strip().lower(): {"password": None, "updated_at": datetime.now(timezone.utc)}
-            for email in (initial_users or [])
-        }
+        self._users: Dict[str, Dict[str, Any]] = {}
+        for email in initial_users or []:
+            self.add_user(email)
+
+    @staticmethod
+    def _hash_password(password: str) -> str:
+        """Aplica derivació de clau segura basada en scrypt segons NIST/OWASP.
+
+        Args:
+            password: Text pla de la contrasenya a derivar.
+
+        Returns:
+            str: Hash formatat com salt_hex$key_hex.
+        """
+        salt = os.urandom(16)
+        key = hashlib.scrypt(
+            password.encode("utf-8"),
+            salt=salt,
+            n=16384,
+            r=8,
+            p=1,
+            maxmem=0,
+            dklen=64,
+        )
+        return f"{salt.hex()}${key.hex()}"
 
     def exists(self, email: str) -> bool:
         """Comprova si una adreça de correu està registrada.
@@ -368,19 +394,20 @@ class UserRepository:
         return email.strip().lower() in self._users
 
     def add_user(self, email: str, initial_password: Optional[str] = None) -> None:
-        """Afegeix una nova adreça d'usuari al repositori.
+        """Afegeix una nova adreça d'usuari al repositori amb contrasenya segura.
 
         Args:
             email: Adreça de correu a registrar.
             initial_password: Contrasenya inicial opcional de l'usuari.
         """
+        hashed = self._hash_password(initial_password) if initial_password else None
         self._users[email.strip().lower()] = {
-            "password": initial_password,
+            "password": hashed,
             "updated_at": datetime.now(timezone.utc),
         }
 
     def update_password(self, email: str, new_password: str) -> bool:
-        """Actualitza la contrasenya d'un usuari existent.
+        """Actualitza la contrasenya d'un usuari emmagatzemant només el seu hash segur.
 
         Args:
             email: Adreça de correu de l'usuari.
@@ -392,39 +419,70 @@ class UserRepository:
         normalized = email.strip().lower()
         if normalized not in self._users:
             return False
-        self._users[normalized]["password"] = new_password
+        self._users[normalized]["password"] = self._hash_password(new_password)
         self._users[normalized]["updated_at"] = datetime.now(timezone.utc)
         return True
 
     def get_password(self, email: str) -> Optional[str]:
-        """Obté la contrasenya registrada d'un usuari.
+        """Obté el hash emmagatzemat de la contrasenya d'un usuari.
 
         Args:
             email: Adreça de correu a consultar.
 
         Returns:
-            Optional[str]: Contrasenya de l'usuari o None si no existeix.
+            Optional[str]: Hash de la contrasenya de l'usuari o None si no existeix.
         """
         user_data = self._users.get(email.strip().lower())
         return user_data["password"] if user_data else None
 
+    def verify_password(self, email: str, password: str) -> bool:
+        """Verifica si la contrasenya facilitada coincideix amb el hash emmagatzemat.
+
+        Args:
+            email: Adreça de correu de l'usuari.
+            password: Text pla de la contrasenya a verificar.
+
+        Returns:
+            bool: True si coincideix, False en cas contrari.
+        """
+        stored = self.get_password(email)
+        if not stored or "$" not in stored:
+            return False
+        salt_hex, key_hex = stored.split("$", 1)
+        salt = bytes.fromhex(salt_hex)
+        expected_key = bytes.fromhex(key_hex)
+        actual_key = hashlib.scrypt(
+            password.encode("utf-8"),
+            salt=salt,
+            n=16384,
+            r=8,
+            p=1,
+            maxmem=0,
+            dklen=64,
+        )
+        return hmac.compare_digest(actual_key, expected_key)
+
 
 class EmailService:
-    """Servei d'enviament de correus electrònics amb despatx asíncron / en segon pla."""
+    """Servei d'enviament de correus electrònics amb registre segur entre fils."""
 
     def __init__(self, async_dispatch: bool = False):
         """Inicialitza el servei amb un historial d'enviaments buit.
 
         Args:
-            async_dispatch: Si és True, despatxa els correus en un fil d'execució
-                independent per simular lliurament desacoblat (mitigació de timing attacks d'I/O).
+            async_dispatch: Si és True, l'enviament intern es despatxa en un nou fil.
         """
         self.sent_emails: List[Dict[str, str]] = []
         self.async_dispatch: bool = async_dispatch
-        self._lock = threading.Lock()
+        self._lock: threading.Lock = threading.Lock()
 
     def _record_email(self, to_email: str, reset_link: str) -> None:
-        """Registra l'enviament del correu de manera segura entre fils."""
+        """Registra l'enviament del correu de manera segura entre fils.
+
+        Args:
+            to_email: Correu de destí.
+            reset_link: Enllaç de restabliment de contrasenya.
+        """
         with self._lock:
             self.sent_emails.append({
                 "to": to_email,
@@ -451,7 +509,7 @@ class EmailService:
 
 
 class RateLimiter:
-    """Limitador de taxa per finestres lliscants amb neteja de memòria per clau."""
+    """Limitador de taxa thread-safe basat en finestres lliscants i gestió eficient de memòria."""
 
     def __init__(self, max_requests: int = 5, window_seconds: int = 300):
         """Inicialitza el limitador de taxa.
@@ -463,48 +521,58 @@ class RateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self._history: Dict[str, List[float]] = {}
+        self._lock: threading.Lock = threading.Lock()
+        self._last_global_purge: float = 0.0
 
     def purge_empty_keys(self, now: Optional[float] = None) -> None:
         """Elimina les claus que ja no tenen cap petició vigent dins la finestra.
-
-        Evita la fuga de memòria per pol·lució indefinida de claus.
 
         Args:
             now: Marca temporal en segons.
         """
         current_time = now if now is not None else time.time()
-        stale_keys = []
-        for identifier, records in list(self._history.items()):
-            active_records = [t for t in records if current_time - t < self.window_seconds]
-            if not active_records:
-                stale_keys.append(identifier)
-            else:
-                self._history[identifier] = active_records
-        for k in stale_keys:
-            self._history.pop(k, None)
+        with self._lock:
+            stale_keys = []
+            for identifier, records in list(self._history.items()):
+                active_records = [t for t in records if current_time - t < self.window_seconds]
+                if not active_records:
+                    stale_keys.append(identifier)
+                else:
+                    self._history[identifier] = active_records
+            for k in stale_keys:
+                self._history.pop(k, None)
 
     def is_allowed(self, identifier: str, current_timestamp: Optional[float] = None) -> bool:
-        """Comprova si la petició per a l'identificador donat és permesa.
+        """Comprova de manera thread-safe i optimitzada si la petició és permesa.
 
         Args:
-            identifier: Clau identificadora (p. ex. correu electrònic o adreça IP).
-            current_timestamp: Marca temporal en segons (per defecte: time.time()).
+            identifier: Clau identificadora (correu electrònic o adreça IP).
+            current_timestamp: Marca temporal en segons.
 
         Returns:
-            bool: True si es troba dins dels límits admesos, False si ha superat el límit.
+            bool: True si la petició és admesa, False si s'ha superat el límit.
         """
         now = current_timestamp if current_timestamp is not None else time.time()
-        self.purge_empty_keys(now=now)
 
-        records = self._history.setdefault(identifier, [])
-        records = [t for t in records if now - t < self.window_seconds]
-        self._history[identifier] = records
+        with self._lock:
+            records = self._history.get(identifier, [])
+            valid_records = [t for t in records if now - t < self.window_seconds]
 
-        if len(records) >= self.max_requests:
-            return False
+            if len(valid_records) >= self.max_requests:
+                self._history[identifier] = valid_records
+                return False
 
-        records.append(now)
-        return True
+            valid_records.append(now)
+            self._history[identifier] = valid_records
+
+            # Purga periòdica controlada per amortitzar cost computacional
+            if now - self._last_global_purge > self.window_seconds:
+                self._last_global_purge = now
+                stale = [k for k, v in self._history.items() if not [t for t in v if now - t < self.window_seconds]]
+                for k in stale:
+                    self._history.pop(k, None)
+
+            return True
 
 
 class PasswordResetController:
@@ -529,7 +597,7 @@ class PasswordResetController:
             base_url: URL base de l'enllaç de restabliment.
             rate_limiter: Limitador de peticions per correu electrònic.
             ip_rate_limiter: Limitador de peticions per adreça IP d'origen (OWASP A07).
-            background_task_runner: Executor asíncron per a despatxar tasques d'I/O en segon pla.
+            background_task_runner: Executor asíncron per a tasques d'I/O en segon pla.
         """
         self.user_repo = user_repository
         self.email_service = email_service
@@ -540,13 +608,16 @@ class PasswordResetController:
         self._background_task_runner = background_task_runner
 
     def _dispatch_task(self, task: Callable[[], None]) -> None:
-        """Executa una tasca en segon pla per evitar atacs de canal lateral d'I/O."""
+        """Executa una tasca en segon pla per mitigar timing attacks d'I/O.
+
+        Args:
+            task: Funció sense paràmetres a executar en segon pla.
+        """
         if self._background_task_runner:
             self._background_task_runner(task)
         else:
-            # Despatx asíncron per defecte via Daemon Thread
-            t = threading.Thread(target=task, daemon=True)
-            t.start()
+            thread = threading.Thread(target=task, daemon=True)
+            thread.start()
 
     def request_password_reset(
         self,
@@ -564,7 +635,6 @@ class PasswordResetController:
         Returns:
             Dict[str, Any]: Resposta estàndard en format diccionari.
         """
-        # 1. Validació de seguretat d'entrada per evitar injeccions
         if not validate_email_format(email):
             return {
                 "status_code": 400,
@@ -575,7 +645,6 @@ class PasswordResetController:
         normalized_email = email.strip().lower()
         current_ts = now.timestamp() if now else time.time()
 
-        # 2. Limitació de taxa dual (Per IP i per Email)
         if ip_address and not self.ip_rate_limiter.is_allowed(ip_address, current_timestamp=current_ts):
             return {
                 "status_code": 429,
@@ -590,16 +659,16 @@ class PasswordResetController:
                 "message": "S'han superat el nombre de peticions permeses. Torneu-ho a provar més tard.",
             }
 
-        # 3. Mitigació d'atac de canal lateral de CPU i I/O
-        # Sempre generem un token per equiparar la càrrega criptogràfica
+        # Equapara càrrega criptogràfica sempre
         token_data = self.token_manager.generate_token(normalized_email, now=now)
 
         if self.user_repo.exists(normalized_email):
             reset_link = f"{self.base_url}{token_data.token}"
-            # Despatxa l'enviament de correu de forma immediata/asíncrona
-            self.email_service.send_reset_email(normalized_email, reset_link)
+            # Mitigació del canal lateral d'I/O via tasca en segon pla
+            self._dispatch_task(
+                lambda: self.email_service.send_reset_email(normalized_email, reset_link)
+            )
 
-        # Resposta genèrica d'èxit estrictament idèntica tant si existeix com si no
         return {
             "status_code": 200,
             "message": GENERIC_SUCCESS_MESSAGE,
@@ -653,7 +722,6 @@ class PasswordResetController:
         Returns:
             Dict[str, Any]: Resposta de la petició de canvi de contrasenya.
         """
-        # 1. Validació estricta de la complexitat de la contrasenya segons NIST/OWASP
         if not validate_password_complexity(new_password):
             return {
                 "status_code": 400,
@@ -664,7 +732,6 @@ class PasswordResetController:
                 ),
             }
 
-        # 2. Verificació del token
         try:
             email = self.token_manager.verify_token(token, now=now)
         except TokenValidationError as err:
@@ -674,7 +741,6 @@ class PasswordResetController:
                 "message": "No s'ha pogut canviar la contrasenya amb el token indicat.",
             }
 
-        # 3. Persistència de la nova contrasenya a l'usuari
         updated = self.user_repo.update_password(email, new_password)
         if not updated:
             return {
@@ -683,7 +749,6 @@ class PasswordResetController:
                 "message": "No s'ha trobat cap compte d'usuari vinculat al correu del token.",
             }
 
-        # 4. Invalida immediatament el token per garantir Single-Use
         self.token_manager.invalidate_token(token, now=now)
 
         return {
