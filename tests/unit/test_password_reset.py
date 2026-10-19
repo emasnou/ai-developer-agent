@@ -192,11 +192,11 @@ def test_token_manager_atomic_consume_and_auto_purge(token_manager):
     with pytest.raises(InvalidTokenError, match="utilitzat anteriorment"):
         token_manager.consume_token(token_data.token, now=t0)
 
-    # Comprova auto-purga en operacions posteriors quan ha transcorregut la finestra
     future_time = t0 + timedelta(minutes=20)
     token_data2 = token_manager.generate_token("user2@test.cat", now=future_time)
     token_manager.invalidate_token(token_data2.token, now=future_time)
-    assert token_data.token not in token_manager._revoked_tokens
+    token_hash1 = token_manager._token_fingerprint(token_data.token)
+    assert token_hash1 not in token_manager._revoked_tokens
 
 
 # =====================================================================
