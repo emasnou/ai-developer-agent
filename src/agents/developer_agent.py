@@ -13,7 +13,7 @@ from src.prompts.developer_prompts import (
 
 class DeveloperAgent:
     def __init__(self):
-        """Inicialitza els serveis necessaris sense paràmetres obligatoris."""
+        """Inicialitza els serveis necessaris i carrega la política de codi local."""
         self.llm = LLMService()
         self.github = GitHubService()
         policy_path = Path("docs/code_policy.md")
@@ -36,8 +36,25 @@ class DeveloperAgent:
             )
             return json.loads(json_str_sanitized, strict=False)
 
+    def _fetch_main_branch_source_files(self, repo_tree: list[str]) -> str:
+        """
+        Llegeix el contingut dels fitxers existents a 'src/' directament des de la branca 'main' de GitHub,
+        garantint que no es llegeixin modificacions brutes o no consolidades de l'entorn local.
+        """
+        src_files = [p for p in repo_tree if p.startswith("src/") and p.endswith(".py")]
+        if not src_files:
+            return "No hi ha fitxers .py existents a src/ a la branca main."
+
+        contents = []
+        for file_path in src_files:
+            content = self.github.get_file_content(file_path, ref="main")
+            if content:
+                contents.append(f"--- FITXER REMOT (main): {file_path} ---\n{content}\n")
+
+        return "\n".join(contents) if contents else "Cap fitxer .py trobat a src/ a main."
+
     def _write_files_to_disk(self, files_list: list[dict]) -> list[Path]:
-        """Escriu o actualitza localment tots els fitxers especificats per la IA."""
+        """Escriu o actualitza localment només els fitxers especificats per la IA."""
         saved_paths = []
         for file_item in files_list:
             file_path = Path(file_item["path"])
@@ -63,17 +80,26 @@ class DeveloperAgent:
         print(f"\n🤖 [DeveloperAgent] Carregant la Issue #{issue_number} des de GitHub...")
         issue = self.github.get_issue(issue_number)
         
-        # 1. Obtenir l'arbre del repositori
-        print("🗺️ [DeveloperAgent] Explorant l'estructura de fitxers del repositori...")
+        # 1. Crear immediatament la branca de treball des de 'main' a GitHub
+        branch_name = f"feature/issue-{issue_number}"
+        print(f"🌿 [DeveloperAgent] Creant la branca de treball '{branch_name}' a partir de 'main'...")
+        self.github.create_branch(base_branch="main", new_branch=branch_name)
+
+        # 2. Explorar l'arbre de 'main' i descarregar el contingut oficial dels fitxers
+        print("🗺️ [DeveloperAgent] Explorant l'estructura de fitxers de 'main' a GitHub...")
         repo_tree = self.github.get_repository_tree(ref="main")
         tree_str = "\n".join(repo_tree) if repo_tree else "Repositori buit o inicial"
+        
+        print("📥 [DeveloperAgent] Carregant el contingut oficial dels fitxers des de 'main'...")
+        existing_files_content = self._fetch_main_branch_source_files(repo_tree)
 
         prompt = f"Títol de la Issue: {issue.title}\n\nEspecificació:\n{issue.body}"
-        print("🤖 [DeveloperAgent] Generant tots els fitxers de codi i tests necessaris...")
+        print("🤖 [DeveloperAgent] Generant/Modificant fitxers de codi i tests integrant el codi oficial de main...")
         
         system_prompt = DEVELOPER_SYSTEM_PROMPT.format(
             code_policy=self.code_policy,
-            repo_tree=tree_str
+            repo_tree=tree_str,
+            existing_files_content=existing_files_content
         )
         
         raw_response = self.llm.generate_task_spec(prompt, system_prompt)
@@ -84,7 +110,7 @@ class DeveloperAgent:
             print(f"❌ Error en extreure el JSON multi-fitxer de la IA: {e}")
             return {"success": False, "attempts": 0}
 
-        # 2. Escriure tots els fitxers indicats
+        # 3. Escriure els fitxers generats al disc local per a l'execució de tests
         files_data = data.get("files", [])
         if not files_data:
             print("⚠️ La IA no ha especificat cap fitxer per modificar/crear.")
@@ -92,7 +118,7 @@ class DeveloperAgent:
 
         saved_paths = self._write_files_to_disk(files_data)
 
-        # 3. Configurar entorn i executar PyTest
+        # 4. Configurar entorn i executar PyTest
         env = os.environ.copy()
         src_dir = str(Path("src").resolve())
         env["PYTHONPATH"] = f"{src_dir}:{env.get('PYTHONPATH', '')}"
@@ -118,14 +144,10 @@ class DeveloperAgent:
             if test_result.returncode == 0:
                 print("✅ Tots els tests han passat amb èxit!")
                 
-                # 4. Aïllar i pujar TOTS els fitxers creats/modificats en aquesta tasca
+                # 5. Publicar els canvis a la nova branca creada a GitHub i obrir la PR
                 files_to_commit = self._get_target_changes_only(files_data)
                 
-                branch_name = f"feature/issue-{issue_number}"
-                print(f"\n🚀 [DeveloperAgent] Publicant els {len(files_to_commit)} fitxers de la tasca a la branca '{branch_name}'...")
-                
-                self.github.create_branch(base_branch="main", new_branch=branch_name)
-                
+                print(f"\n🚀 [DeveloperAgent] Publicant els {len(files_to_commit)} fitxers a la branca '{branch_name}'...")
                 commit_msg = f"feat: resolució automàtica Issue #{issue_number} ({data.get('summary', 'multi-fitxer')})"
                 self.github.commit_and_push_files(branch_name, files_to_commit, commit_msg)
                 
@@ -133,6 +155,7 @@ class DeveloperAgent:
                 pr_body = (
                     f"Aquesta Pull Request ha estat generada automàticament per l'**Agent Desenvolupador (Multi-Fitxer)**.\n\n"
                     f"- **Issue resolta:** #{issue_number}\n"
+                    f"- **Branca origen:** `{branch_name}` (creada netament des de `main`)\n"
                     f"- **Resum:** {data.get('summary', 'N/A')}\n"
                     f"- **Fitxers modificats/creats:**\n{files_summary}\n"
                     f"- **Tests executats:** Passats satisfactòriament en {attempt} intent/s"
@@ -192,6 +215,7 @@ class DeveloperAgent:
 
         repo_tree = self.github.get_repository_tree(ref=branch_name)
         tree_str = "\n".join(repo_tree) if repo_tree else ""
+        existing_files_content = self._fetch_main_branch_source_files(repo_tree)
 
         remediation_prompt = DEVELOPER_REMEDIATION_PROMPT.format(
             code_policy=self.code_policy,
@@ -200,7 +224,8 @@ class DeveloperAgent:
 
         system_prompt = DEVELOPER_SYSTEM_PROMPT.format(
             code_policy=self.code_policy,
-            repo_tree=tree_str
+            repo_tree=tree_str,
+            existing_files_content=existing_files_content
         )
 
         raw_response = self.llm.generate_task_spec(remediation_prompt, system_prompt)
