@@ -1,37 +1,26 @@
-"""
-Agent Analyst per analitzar requisits i issues de GitHub.
-"""
-
-from typing import Any, Dict
 from src.services.llm_service import LLMService
+from src.services.github_service import GitHubService
+from src.prompts.analyst_prompts import ANALYST_SYSTEM_PROMPT
 
 class AnalystAgent:
-    """
-    Agent encarregat d'analitzar issues i generar especificacions tècniques.
-    """
+    def __init__(self):
+        """Inicialitza els serveis de LLM i GitHub."""
+        self.llm = LLMService()
+        self.github = GitHubService()
 
-    def __init__(self, llm_service: LLMService) -> None:
+    def process_requirement_and_create_issue(self, requirement: str, issue_title: str) -> dict:
         """
-        Inicialitza l'AnalystAgent.
-
-        Args:
-            llm_service (LLMService): Servei per interactuar amb el LLM.
+        1. Rep el requeriment de l'usuari.
+        2. Genera la tasca amb detalls de QA mitjançant el LLM.
+        3. Publica la Issue al repositori de GitHub amb l'etiqueta 'enhancement'.
         """
-        self.llm_service = llm_service
-
-    def analyze_issue(self, issue_content: str) -> Dict[str, Any]:
-        """
-        Analitza una issue de GitHub i retorna una estructura d'anàlisi.
-
-        Args:
-            issue_content (str): Contingut de la issue.
-
-        Returns:
-            Dict[str, Any]: Resultat de l'anàlisi.
-        """
-        try:
-            # Simulació d'anàlisi amb LLM
-            analysis_result = {"status": "analyzed", "complexity": "medium"}
-            return analysis_result
-        except Exception as e:
-            raise
+        print("🤖 [AnalystAgent] Analitzant requeriments i generant matriu de QA amb Gemini...")
+        markdown_body = self.llm.generate_task_spec(requirement, ANALYST_SYSTEM_PROMPT)
+        
+        print("🤖 [AnalystAgent] Creant la Issue a GitHub...")
+        issue_result = self.github.create_issue(
+            title=issue_title,
+            body=markdown_body,
+            labels=["enhancement", "agent-analyst"]
+        )
+        return issue_result
