@@ -1,5 +1,6 @@
 """Conjunt complet de tests unitaris i d'integració per al mòdul password_reset."""
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import pytest
 
@@ -180,6 +181,24 @@ def test_single_use_token_revocation_and_memory_purge(token_manager):
     assert len(token_manager._revoked_tokens) == 0
 
 
+def test_token_manager_atomic_consume_and_auto_purge(token_manager):
+    """Verifica que consume_token invalida immediatament i executa auto-purga."""
+    t0 = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    token_data = token_manager.generate_token("user@test.cat", now=t0)
+
+    email = token_manager.consume_token(token_data.token, now=t0)
+    assert email == "user@test.cat"
+
+    with pytest.raises(InvalidTokenError, match="utilitzat anteriorment"):
+        token_manager.consume_token(token_data.token, now=t0)
+
+    # Comprova auto-purga en operacions posteriors quan ha transcorregut la finestra
+    future_time = t0 + timedelta(minutes=20)
+    token_data2 = token_manager.generate_token("user2@test.cat", now=future_time)
+    token_manager.invalidate_token(token_data2.token, now=future_time)
+    assert token_data.token not in token_manager._revoked_tokens
+
+
 # =====================================================================
 # TESTS UNITARIS - RATE LIMITING I PURGA DE CLAUS
 # =====================================================================
@@ -271,6 +290,26 @@ def test_e2e_full_successful_flow_with_password_change(controller, email_service
     reused_res = controller.complete_password_reset(token, strong_pwd, now=access_time)
     assert reused_res["status_code"] == 400
     assert "utilitzat" in reused_res["error"]
+
+
+def test_concurrent_complete_password_reset_mitigates_toctou(controller):
+    """Comprova que peticions concurrents amb el mateix token no poden passar alhora (TOCTOU)."""
+    now = datetime(2025, 3, 1, 10, 0, 0, tzinfo=timezone.utc)
+    token_data = controller.token_manager.generate_token("usuari@exemple.com", now=now)
+    token = token_data.token
+    password = "PasswordValid123!"
+
+    def do_reset():
+        return controller.complete_password_reset(token, password, now=now)
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(do_reset) for _ in range(5)]
+        results = [f.result() for f in futures]
+
+    successes = [r for r in results if r["status_code"] == 200]
+    failures = [r for r in results if r["status_code"] == 400]
+    assert len(successes) == 1
+    assert len(failures) == 4
 
 
 def test_e2e_unregistered_email_does_not_send_mail(controller, email_service):
