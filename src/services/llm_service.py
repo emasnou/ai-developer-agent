@@ -20,7 +20,7 @@ class LLMService:
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=2, min=2, max=20),
         before_sleep=lambda retry_state: print(
-            f"⚠️ Pico d'alta demanda a l'API de Gemini (503). Reintentant en {retry_state.next_action.sleep:.1f} segons..."
+            f"⚠️ Pic d'alta demanda a l'API de Gemini (503). Reintentant en {retry_state.next_action.sleep:.1f} segons..."
         )
     )
     def _call_gemini_with_retry(self, prompt: str, model_name: str) -> str:
