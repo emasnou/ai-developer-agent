@@ -162,6 +162,18 @@ class PasswordResetTokenManager:
             data += "=" * padding
         return base64.urlsafe_b64decode(data)
 
+    @staticmethod
+    def _token_fingerprint(token: str) -> str:
+        """Calcula el hash SHA-256 d'un token per emmagatzemar-ne una empremta segura.
+
+        Args:
+            token: Cadena del token.
+
+        Returns:
+            str: Hex digest de l'empremta.
+        """
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
     def generate_token(self, email: str, now: Optional[datetime] = None) -> ResetTokenData:
         """Genera un token d'un sol ús signat mitjançant HMAC-SHA256.
 
@@ -211,10 +223,10 @@ class PasswordResetTokenManager:
 
         with self._lock:
             expired_tokens = [
-                tok for tok, exp_ts in self._revoked_tokens.items() if exp_ts <= now_ts
+                tok_hash for tok_hash, exp_ts in self._revoked_tokens.items() if exp_ts <= now_ts
             ]
-            for tok in expired_tokens:
-                del self._revoked_tokens[tok]
+            for tok_hash in expired_tokens:
+                del self._revoked_tokens[tok_hash]
             self._last_purge_time = now_ts
             return len(expired_tokens)
 
@@ -226,9 +238,9 @@ class PasswordResetTokenManager:
         """
         purge_interval = self.expiration_minutes * 60
         if now_ts - self._last_purge_time > purge_interval:
-            stale_keys = [tok for tok, exp in self._revoked_tokens.items() if exp <= now_ts]
-            for tok in stale_keys:
-                self._revoked_tokens.pop(tok, None)
+            stale_keys = [tok_hash for tok_hash, exp in self._revoked_tokens.items() if exp <= now_ts]
+            for tok_hash in stale_keys:
+                self._revoked_tokens.pop(tok_hash, None)
             self._last_purge_time = now_ts
 
     def invalidate_token(self, token: str, now: Optional[datetime] = None) -> None:
@@ -250,8 +262,9 @@ class PasswordResetTokenManager:
         except Exception:
             exp_ts = now_ts + (self.expiration_minutes * 60)
 
+        token_hash = self._token_fingerprint(token)
         with self._lock:
-            self._revoked_tokens[token] = exp_ts
+            self._revoked_tokens[token_hash] = exp_ts
             self._maybe_auto_purge(now_ts)
 
     def is_token_revoked(self, token: str, now: Optional[datetime] = None) -> bool:
@@ -269,12 +282,13 @@ class PasswordResetTokenManager:
             now_dt = now_dt.replace(tzinfo=timezone.utc)
         now_ts = int(now_dt.timestamp())
 
+        token_hash = self._token_fingerprint(token)
         with self._lock:
-            exp_ts = self._revoked_tokens.get(token)
+            exp_ts = self._revoked_tokens.get(token_hash)
             if exp_ts is None:
                 return False
             if exp_ts <= now_ts:
-                del self._revoked_tokens[token]
+                del self._revoked_tokens[token_hash]
                 return False
             return True
 
@@ -336,11 +350,12 @@ class PasswordResetTokenManager:
             now_dt = now_dt.replace(tzinfo=timezone.utc)
         now_ts = int(now_dt.timestamp())
 
-        exp_revoked = self._revoked_tokens.get(token)
+        token_hash = self._token_fingerprint(token)
+        exp_revoked = self._revoked_tokens.get(token_hash)
         if exp_revoked is not None:
             if exp_revoked > now_ts:
                 raise InvalidTokenError("El token ja ha estat utilitzat anteriorment.")
-            del self._revoked_tokens[token]
+            del self._revoked_tokens[token_hash]
 
         exp_timestamp = payload.get("exp")
         email = payload.get("email")
@@ -396,7 +411,8 @@ class PasswordResetTokenManager:
             except Exception:
                 exp_ts = now_ts + (self.expiration_minutes * 60)
 
-            self._revoked_tokens[token] = exp_ts
+            token_hash = self._token_fingerprint(token)
+            self._revoked_tokens[token_hash] = exp_ts
             self._maybe_auto_purge(now_ts)
             return email
 
@@ -432,6 +448,7 @@ class UserRepository:
             initial_users: Llista opcional de correus electrònics a registrar inicialment.
         """
         self._users: Dict[str, Dict[str, Any]] = {}
+        self._lock: threading.Lock = threading.Lock()
         for email in initial_users or []:
             self.add_user(email)
 
@@ -466,7 +483,8 @@ class UserRepository:
         Returns:
             bool: True si l'usuari existeix, False en cas contrari.
         """
-        return email.strip().lower() in self._users
+        with self._lock:
+            return email.strip().lower() in self._users
 
     def add_user(self, email: str, initial_password: Optional[str] = None) -> None:
         """Afegeix una nova adreça d'usuari al repositori amb contrasenya segura.
@@ -476,10 +494,11 @@ class UserRepository:
             initial_password: Contrasenya inicial opcional de l'usuari.
         """
         hashed = self._hash_password(initial_password) if initial_password else None
-        self._users[email.strip().lower()] = {
-            "password": hashed,
-            "updated_at": datetime.now(timezone.utc),
-        }
+        with self._lock:
+            self._users[email.strip().lower()] = {
+                "password": hashed,
+                "updated_at": datetime.now(timezone.utc),
+            }
 
     def update_password(self, email: str, new_password: str) -> bool:
         """Actualitza la contrasenya d'un usuari emmagatzemant només el seu hash segur.
@@ -492,11 +511,13 @@ class UserRepository:
             bool: True si s'ha actualitzat correctament, False si l'usuari no existeix.
         """
         normalized = email.strip().lower()
-        if normalized not in self._users:
-            return False
-        self._users[normalized]["password"] = self._hash_password(new_password)
-        self._users[normalized]["updated_at"] = datetime.now(timezone.utc)
-        return True
+        hashed = self._hash_password(new_password)
+        with self._lock:
+            if normalized not in self._users:
+                return False
+            self._users[normalized]["password"] = hashed
+            self._users[normalized]["updated_at"] = datetime.now(timezone.utc)
+            return True
 
     def get_password(self, email: str) -> Optional[str]:
         """Obté el hash emmagatzemat de la contrasenya d'un usuari.
@@ -507,8 +528,9 @@ class UserRepository:
         Returns:
             Optional[str]: Hash de la contrasenya de l'usuari o None si no existeix.
         """
-        user_data = self._users.get(email.strip().lower())
-        return user_data["password"] if user_data else None
+        with self._lock:
+            user_data = self._users.get(email.strip().lower())
+            return user_data["password"] if user_data else None
 
     def verify_password(self, email: str, password: str) -> bool:
         """Verifica si la contrasenya facilitada coincideix amb el hash emmagatzemat.
@@ -606,8 +628,8 @@ class RateLimiter:
             now: Marca temporal en segons.
         """
         current_time = now if now is not None else time.time()
+        cutoff = current_time - self.window_seconds
         with self._lock:
-            cutoff = current_time - self.window_seconds
             stale_keys = []
             for identifier, records in list(self._history.items()):
                 active = [t for t in records if t > cutoff]
@@ -656,7 +678,8 @@ class RateLimiter:
 class PasswordResetController:
     """Controlador per a la gestió de sol·licituds i validació d'enllaços de recuperació."""
 
-    def __init__(self,
+    def __init__(
+        self,
         user_repository: UserRepository,
         email_service: EmailService,
         token_manager: PasswordResetTokenManager,
@@ -776,12 +799,11 @@ class PasswordResetController:
             Dict[str, Any]: Dades de resolució de l'accés.
         """
         try:
-            email = self.token_manager.verify_token(token, now=now)
+            self.token_manager.verify_token(token, now=now)
             return {
                 "status_code": 200,
                 "can_reset": True,
                 "message": "Accés concedit al formulari de nova contrasenya.",
-                "email": email,
             }
         except ExpiredTokenError:
             return {
@@ -843,5 +865,4 @@ class PasswordResetController:
         return {
             "status_code": 200,
             "message": "Contrasenya actualitzada correctament.",
-            "email": email,
         }
