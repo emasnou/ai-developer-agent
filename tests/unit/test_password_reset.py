@@ -50,6 +50,7 @@ def controller(user_repo, email_service, token_manager):
         email_service=email_service,
         token_manager=token_manager,
         base_url="https://exemple.com/reset-password?token=",
+        background_task_runner=lambda task: task(),
     )
 
 
@@ -71,7 +72,6 @@ def test_validate_email_format():
     assert validate_email_format("valid.user@exemple.com") is True
     assert validate_email_format("user+test@sub.domain.cat") is True
 
-    # Formats invàlids o intents d'injecció SMTP CRLF
     assert validate_email_format("usuari_sense_arroba.com") is False
     assert validate_email_format("usuari@") is False
     assert validate_email_format("@exemple.com") is False
@@ -81,21 +81,30 @@ def test_validate_email_format():
 
 def test_validate_password_complexity():
     """Valida les regles de complexitat segons NIST/OWASP (A07)."""
-    # Vàlida
     assert validate_password_complexity("Abcdef12345!") is True
     assert validate_password_complexity("Correct-Horse-Battery-Staple-99$") is True
 
-    # Massa curta (< 12)
     assert validate_password_complexity("Curta1!") is False
-
-    # Massa llarga (> 128)
-    assert validate_password_complexity("A" * 125 + "1!a" + "b" * 10) is False
-
-    # Manca de caràcters obligatoris
+    assert validate_password_complexity("A" * (PASSWORD_MAX_LENGTH + 1)) is False
     assert validate_password_complexity("sensemajuscula123!") is False
     assert validate_password_complexity("SENSEMINUSCULA123!") is False
     assert validate_password_complexity("SenseNumeroNiEspecial") is False
     assert validate_password_complexity("SenseCaràcterEspecial123") is False
+
+
+def test_user_repository_stores_hashed_passwords_and_verifies():
+    """Valida que les contrasenyes no s'emmagatzemen en text pla i empren scrypt."""
+    repo = UserRepository()
+    email = "test@exemple.com"
+    raw_pwd = "ContrasenyaSegura!123"
+    repo.add_user(email, initial_password=raw_pwd)
+
+    stored = repo.get_password(email)
+    assert stored is not None
+    assert stored != raw_pwd
+    assert "$" in stored
+    assert repo.verify_password(email, raw_pwd) is True
+    assert repo.verify_password(email, "PasswordIncorrecte!999") is False
 
 
 # =====================================================================
@@ -120,33 +129,32 @@ def test_unit_1_token_generation_uniqueness_and_fifteen_minute_expiration(token_
 
 
 def test_unit_2_token_validation_fails_when_expired_or_tampered(token_manager):
-    """Test 2: Validar que el mètode retorna fals quan expira o s'ha manipulat."""
+    """Test 2: Validar que el mètode retorna fals quan expira o s'ha manipulat sense fuita d'email."""
     base_time = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
     token_data = token_manager.generate_token("usuari@exemple.com", now=base_time)
 
-    # Just abans dels 15 minuts (vàlid)
     valid_check_time = base_time + timedelta(minutes=14, seconds=59)
     is_valid, email, err = token_manager.validate_token(token_data.token, now=valid_check_time)
     assert is_valid is True
     assert email == "usuari@exemple.com"
     assert err is None
 
-    # Token caducat
     expired_check_time = base_time + timedelta(minutes=15, seconds=1)
-    is_valid_expired, _, err_msg = token_manager.validate_token(token_data.token, now=expired_check_time)
+    is_valid_expired, email_exp, err_msg = token_manager.validate_token(token_data.token, now=expired_check_time)
     assert is_valid_expired is False
+    assert email_exp is None
     assert err_msg == "L'enllaç ha expirat."
 
     with pytest.raises(ExpiredTokenError):
         token_manager.verify_token(token_data.token, now=expired_check_time)
 
-    # Token manipulat
     payload_b64, sig_b64 = token_data.token.split(".")
     tampered_sig = sig_b64[:-2] + ("ab" if sig_b64[-2:] != "ab" else "cd")
     tampered_token = f"{payload_b64}.{tampered_sig}"
 
-    is_valid_tampered, _, err_tampered = token_manager.validate_token(tampered_token, now=base_time)
+    is_valid_tampered, email_tamp, err_tampered = token_manager.validate_token(tampered_token, now=base_time)
     assert is_valid_tampered is False
+    assert email_tamp is None
     assert "manipulada" in err_tampered or "invàlida" in err_tampered
 
     with pytest.raises(InvalidTokenError):
@@ -160,14 +168,12 @@ def test_single_use_token_revocation_and_memory_purge(token_manager):
 
     assert token_manager.verify_token(token_data.token, now=base_time) == "usuari@exemple.com"
 
-    # Revocació
     token_manager.invalidate_token(token_data.token, now=base_time)
     assert token_manager.is_token_revoked(token_data.token, now=base_time) is True
 
     with pytest.raises(InvalidTokenError, match="utilitzat anteriorment"):
         token_manager.verify_token(token_data.token, now=base_time)
 
-    # Al cap de 20 minuts, el token revocat ja ha expirat naturalment i es purga de memòria
     future_time = base_time + timedelta(minutes=20)
     purged = token_manager.purge_expired_revocations(now=future_time)
     assert purged == 1
@@ -184,7 +190,6 @@ def test_rate_limiter_memory_leak_mitigation():
     limiter.is_allowed("user1@test.cat", current_timestamp=100.0)
     assert "user1@test.cat" in limiter._history
 
-    # Temps futur on la petició ha expirat (> 60s)
     limiter.purge_empty_keys(now=200.0)
     assert "user1@test.cat" not in limiter._history
 
@@ -195,22 +200,20 @@ def test_ip_and_email_rate_limiting(controller):
     email = "usuari@exemple.com"
     ip = "192.168.1.10"
 
-    # 5 peticions permeses per email
     for _ in range(5):
         res = controller.request_password_reset(email, ip_address=ip, now=now)
         assert res["status_code"] == 200
 
-    # La 6a pel mateix correu és bloquejada
     res_email_blocked = controller.request_password_reset(email, ip_address=ip, now=now)
     assert res_email_blocked["status_code"] == 429
     assert res_email_blocked["error"] == "Massa peticions"
 
-    # Prova de bloqueig per IP
     controller_ip = PasswordResetController(
         user_repository=UserRepository(),
         email_service=EmailService(),
         token_manager=controller.token_manager,
         ip_rate_limiter=RateLimiter(max_requests=2, window_seconds=60),
+        background_task_runner=lambda t: t(),
     )
     controller_ip.request_password_reset("user1@exemple.com", ip_address="10.0.0.1", now=now)
     controller_ip.request_password_reset("user2@exemple.com", ip_address="10.0.0.1", now=now)
@@ -239,37 +242,32 @@ def test_unit_3_response_strictly_identical_for_registered_and_unregistered_emai
 
 
 def test_e2e_full_successful_flow_with_password_change(controller, email_service, user_repo):
-    """Flux complet: sol·licitud, accés al formulari, canvi i persistència de contrasenya."""
+    """Flux complet: sol·licitud, accés al formulari, canvi i persistència segura de contrasenya."""
     now = datetime(2025, 2, 1, 9, 0, 0, tzinfo=timezone.utc)
     user_email = "usuari@exemple.com"
 
-    # 1. Sol·licitud
     resp = controller.request_password_reset(user_email, now=now)
     assert resp["status_code"] == 200
     assert len(email_service.sent_emails) == 1
     reset_link = email_service.sent_emails[0]["reset_link"]
     token = reset_link.split("token=")[1]
 
-    # 2. Formulari a través del token
     access_time = now + timedelta(minutes=5)
     form_resp = controller.access_reset_form(token, now=access_time)
     assert form_resp["status_code"] == 200
     assert form_resp["can_reset"] is True
 
-    # 3. Intent de canvi amb contrasenya massa feble (no compleix NIST)
     weak_res = controller.complete_password_reset(token, "feble", now=access_time)
     assert weak_res["status_code"] == 400
     assert weak_res["error"] == "Contrasenya feble o no vàlida"
-    # El token encara ha de ser vàlid perquè no s'ha consumit en cas de dades invàlides
     assert controller.token_manager.is_token_revoked(token) is False
 
-    # 4. Canvi amb contrasenya robusta
     strong_pwd = "NovaContrasenyaSegura!123"
     success_res = controller.complete_password_reset(token, strong_pwd, now=access_time)
     assert success_res["status_code"] == 200
-    assert user_repo.get_password(user_email) == strong_pwd
+    assert user_repo.verify_password(user_email, strong_pwd) is True
+    assert user_repo.get_password(user_email) != strong_pwd
 
-    # 5. Token consumit (Single-Use): segon intent denegat
     reused_res = controller.complete_password_reset(token, strong_pwd, now=access_time)
     assert reused_res["status_code"] == 400
     assert "utilitzat" in reused_res["error"]
