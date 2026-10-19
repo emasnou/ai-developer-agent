@@ -21,20 +21,29 @@ class DeveloperAgent:
 
     def _parse_json_response(self, text: str) -> dict:
         """Extreu i parseja un objecte JSON de la resposta del LLM de manera resilient."""
+        # 1. Netejar blocs de codi Markdown (```json ... ```)
         cleaned = re.sub(r'```json\s*', '', text)
         cleaned = re.sub(r'```\s*$', '', cleaned)
+        
+        # 2. Extreure el primer bloc que comenci per { i acabi per }
         match = re.search(r'\{.*\}', cleaned, re.DOTALL)
         json_str = match.group(0) if match else cleaned.strip()
 
+        # 3. Intent de parsing directe amb strict=False
         try:
             return json.loads(json_str, strict=False)
         except json.JSONDecodeError:
-            json_str_sanitized = re.sub(
-                r'[\x00-\x1F\x7F]',
-                lambda m: f"\\u{ord(m.group(0)):04x}" if m.group(0) not in ('\n', '\r', '\t') else m.group(0),
-                json_str
-            )
-            return json.loads(json_str_sanitized, strict=False)
+            # 4. Si falla, netegem caràcters de control invisibles o no escapats
+            sanitized = re.sub(r'[\x00-\x1F\x7F]', lambda m: f"\\u{ord(m.group(0)):04x}" if m.group(0) not in ('\n', '\r', '\t') else m.group(0), json_str)
+            try:
+                return json.loads(sanitized, strict=False)
+            except json.JSONDecodeError as err:
+                print(f"⚠️ Error residual en parsejar JSON: {err}")
+                # 5. Fallback d'emergència si hi ha cometes triples o residuals
+                sanitized_quotes = re.sub(r'(?<!\\)"', r'\"', json_str)
+                # Restaurem les cometes de les claus JSON principals
+                sanitized_quotes = re.sub(r'\\"(summary|files|path|action|content)\\"', r'"\1"', sanitized_quotes)
+                return json.loads(sanitized_quotes, strict=False)
 
     def _fetch_main_branch_source_files(self, repo_tree: list[str]) -> str:
         """
