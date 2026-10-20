@@ -11,12 +11,14 @@ FITXERS CLAU EXISTENTS I EL SEU CONTINGUT ACTUAL:
 {existing_files_content}
 
 REGLES D'OR DE GENERACIÓ I MODIFICACIÓ:
-1. FITXERS COMPLETS (MOLT IMPORTANT): Quan modifiquis un fitxer existent (action = "modify"), el camp "content" HA DE CONTENIR TOT EL FITXER COMPLET AMB LES SEVES IMPORTACIONS, CLASSES I FUNCIONS ANTERIORS INTEGRADES. Mai no retornis només un fragment, diff o el nou mètode aïllat, ja que sobreescriuria i esborraria la resta del fitxer!
-2. Si crees un fitxer nou (action = "create"), genera el seu contingut Python complet.
-3. FORMAT JSON ESTRICTE: Dins del camp "content", escapa qualsevol cometa doble intern (`\\"`) o utilitza cometes simples (`'`) per a les cadenes de Python per tal de no trencar la sintaxi del JSON.
-4. COMETES DINS DEL CODI: Utilitza cometes simples (`'`) per a les cadenes de text en el codi Python per evitar conflictes amb les cometes dobles del JSON (`"`). Si fas servir cometes dobles en el codi Python, escapa-les obligatòriament com a `\\"`.
-5. Assegura't de generar o adaptar els tests unitaris a `tests/unit/` per provar els canvis de manera exhaustiva amb `pytest`.
-6. Segueix la política de nomenclatura (snake_case, PascalCase, Type Hints, Docstrings) i seguretat OWASP Top 10.
+1. NO ESCRIGUIS TEXT EXTRA FORA DEL JSON. La teva resposta ha de començar directament amb `{` i acabar amb `}`.
+2. FITXERS COMPLETS (MOLT IMPORTANT): Quan modifiquis un fitxer existent (action = "modify"), el camp "content" HA DE CONTENIR TOT EL FITXER COMPLET AMB LES SEVES IMPORTACIONS, CLASSES I FUNCIONS ANTERIORS INTEGRADES. Mai no retornis només un fragment, diff o el nou mètode aïllat, ja que sobreescriuria i esborraria la resta del fitxer!
+3. Si crees un fitxer nou (action = "create"), genera el seu contingut Python complet.
+4. FORMAT JSON ESTRICTE: Dins del camp "content", escapa qualsevol cometa doble intern (`\\"`) o utilitza cometes simples (`'`) per a les cadenes de Python per tal de no trencar la sintaxi del JSON.
+5. REGLA DE COMETES PER A PYTHON: Dins del codi Python del camp "content", UTILITZA ÚNICAMENT COMETES SIMPLES (`'`) per a totes les cadenes i docstrings. No utilitzis mai cometes dobles (`"`) ni cometes triples dobles (`\"\"\"`), ja que trenquen la sintaxi del JSON.
+6. MANTÉN LA INDENTACIÓ: Mantén exactament els 4 espais per nivell d'indentació Python. 
+7. Assegura't de generar o adaptar els tests unitaris a `tests/unit/` per provar els canvis de manera exhaustiva amb `pytest`.
+8. Segueix la política de nomenclatura (snake_case, PascalCase, Type Hints, Docstrings) i seguretat OWASP Top 10.
 
 HAS DE RESPONDRE ÚNICAMENT AMB UN OBJECTE JSON VÀLID (sense text addicional ni blocs de markdown fora del JSON) amb aquesta estructura exactament:
 

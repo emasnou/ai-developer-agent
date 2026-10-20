@@ -23,42 +23,45 @@ class DeveloperAgent:
         self.code_policy = policy_path.read_text(encoding="utf-8") if policy_path.exists() else "Aplica PEP8 i OWASP Top 10."
 
     def _parse_json_response(self, text: str) -> dict:
-        """Extreu i parseja un objecte JSON de la resposta del LLM de manera ultra-resilient."""
-        # 1. Netejar blocs de codi Markdown
-        cleaned = re.sub(r'```json\s*', '', text)
+        """Extreu i parseja un objecte JSON/YAML de la resposta del LLM de manera ultra-resilient."""
+        import yaml
+
+        # 1. Netejar blocs de codi Markdown (```json o ```yaml)
+        cleaned = re.sub(r'```(json|yaml)?\s*', '', text)
         cleaned = re.sub(r'```\s*$', '', cleaned)
-        
-        # 2. Cercar exactament des del primer '{' fins a l'últim '}' (ignora text o salutacions prèvies)
+
+        # 2. Cercar des del primer '{' o el primer 'summary:'
         first_brace = cleaned.find('{')
         last_brace = cleaned.rfind('}')
-        
+
         if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-            json_str = cleaned[first_brace:last_brace + 1]
+            json_candidate = cleaned[first_brace:last_brace + 1]
         else:
-            json_str = cleaned.strip()
+            json_candidate = cleaned.strip()
 
-        # 3. Primer intent: parsing natiu
-        try:
-            return json.loads(json_str, strict=False)
-        except json.JSONDecodeError:
-            pass
-
-        # 4. Segon intent: Utilitzar json_repair per arreglar cometes, text o caràcters de control
+        # 3. Primer intent: json_repair
         try:
             from json_repair import repair_json
-            repaired = repair_json(json_str, return_objects=True)
-            if isinstance(repaired, dict):
+            repaired = repair_json(json_candidate, return_objects=True)
+            if isinstance(repaired, dict) and "files" in repaired:
                 return repaired
-        except Exception as e:
-            print(f"⚠️ Alerta en executar json_repair: {e}")
+        except Exception:
+            pass
 
-        # 5. Tercer intent: Sanitització manual extrema de caràcters de control
-        sanitized = re.sub(
-            r'[\x00-\x1F\x7F]',
-            lambda m: f"\\u{ord(m.group(0)):04x}" if m.group(0) not in ('\n', '\r', '\t') else m.group(0),
-            json_str
-        )
-        return json.loads(sanitized, strict=False)
+        # 4. Segon intent: parsing amb PyYAML (molt més tolerant amb codi Python multilínia)
+        try:
+            parsed_yaml = yaml.safe_load(cleaned)
+            if isinstance(parsed_yaml, dict) and "files" in parsed_yaml:
+                return parsed_yaml
+        except Exception:
+            pass
+
+        # 5. Tercer intent: json.loads natiu amb strict=False
+        try:
+            return json.loads(json_candidate, strict=False)
+        except json.JSONDecodeError as err:
+            print(f"❌ Error critic de parsing en la resposta de Gemini: {err}")
+            raise err
 
     def _prepare_workspace_environment(self, issue_number: int) -> Path:
         """
