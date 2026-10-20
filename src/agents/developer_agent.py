@@ -14,12 +14,15 @@ from src.prompts.developer_prompts import (
     DEVELOPER_FIX_PROMPT,
     DEVELOPER_REMEDIATION_PROMPT
 )
+from src.utils.logger import AgentLogger, StructuredAgentAdapter
 
 class DeveloperAgent:
     def __init__(self):
-        """Inicialitza els serveis necessaris i carrega la política de codi local."""
+        """Inicialitza els serveis necessaris, carrega la política de codi local i el logger."""
         self.llm = LLMService()
         self.github = GitHubService()
+        base_logger = AgentLogger.get_logger("DeveloperAgent")
+        self.logger = StructuredAgentAdapter(base_logger, "DeveloperAgent")
         policy_path = Path("docs/code_policy.md")
         self.code_policy = policy_path.read_text(encoding="utf-8") if policy_path.exists() else "Aplica PEP8 i OWASP Top 10."
 
@@ -28,6 +31,7 @@ class DeveloperAgent:
         import yaml
 
         if not text or not text.strip():
+            self.logger.error("Resposta buida rebuda del model LLM.")
             raise ValueError("Resposta buida del model LLM.")
 
         def normalize_result(data: dict) -> dict:
@@ -65,10 +69,9 @@ class DeveloperAgent:
             return f"{prefix}{json.dumps(code)}"
 
         preprocessed = re.sub(
-            r'("(?:content|code)"\s*:\s*)(\'\'\'|""")(.*?)(\2)',
+            r'("(?:content|code)"\s*:\s*)(\'\'\'|""")([\s\S]*?)(\2)',
             replace_triple_quotes,
-            cleaned,
-            flags=re.DOTALL
+            cleaned
         )
 
         # 4. Cercar des del primer '{' fins a l'últim '}'
@@ -139,7 +142,7 @@ class DeveloperAgent:
         except Exception:
             pass
 
-        # Fallback final: intent natiu que generarà l'error estàndard si res no ha funcionat
+        self.logger.error("Error crític: No s'ha pogut parsejar cap JSON vàlid del LLM.")
         return normalize_result(json.loads(json_candidate, strict=False))
 
     def _prepare_workspace_environment(self, issue_number: int) -> Path:
@@ -153,9 +156,9 @@ class DeveloperAgent:
         if workspace_dir.exists():
             shutil.rmtree(workspace_dir)
 
+        self.logger.info(f"Duplicant entorn local cap al workspace: {workspace_dir}")
         print(f"📦 [DeveloperAgent] Duplicant entorn local cap al workspace: {workspace_dir}...")
         
-        # Copiem el directori local ignorant carpetes pesades o temporals
         def ignore_patterns(path, names):
             ignored = [".git", "__pycache__", ".pytest_cache", ".venv", "venv"]
             if ".workspace" in path:
@@ -170,6 +173,7 @@ class DeveloperAgent:
         Descarrega i sobrescriu al workspace tot el contingut de la branca 'main' de GitHub,
         per garantir que partim de l'estat oficial i pur de 'main'.
         """
+        self.logger.info("Sincronitzant contingut de la branca 'main' de GitHub al workspace...")
         print("📥 [DeveloperAgent] Sincronitzant contingut de la branca 'main' de GitHub al workspace...")
         repo_tree = self.github.get_repository_tree(ref="main")
 
@@ -184,7 +188,7 @@ class DeveloperAgent:
         """Llegeix el contingut dels fitxers font sincronitzats al workspace."""
         src_path = workspace_dir / "src"
         if not src_path.exists():
-            return "No hi ha fitxers existents a src/"
+            return "No hi ha fitxers existents al directori src/"
 
         contents = []
         for file in src_path.rglob("*.py"):
@@ -193,7 +197,7 @@ class DeveloperAgent:
                 text = file.read_text(encoding="utf-8")
                 contents.append(f"--- FITXER ({rel_path}) ---\n{text}\n")
             except Exception as e:
-                print(f"⚠️ Error en llegir el fitxer del workspace {file}: {e}")
+                self.logger.warning(f"Error en llegir el fitxer del workspace {file}: {e}")
 
         return "\n".join(contents) if contents else "Cap fitxer .py trobat a src/"
 
@@ -206,14 +210,14 @@ class DeveloperAgent:
             
             content = file_item["content"]
             
-            # Verificació bàsica de sintaxi Python
             try:
                 ast.parse(content)
             except SyntaxError as e:
-                print(f"⚠️ Alerta de sintaxi/indentació a {file_item['path']}: {e}")
+                self.logger.warning(f"Alerta de sintaxi/indentació a {file_item['path']}: {e}")
 
             target_path.write_text(content, encoding="utf-8")
             saved_paths.append(target_path)
+            self.logger.info(f"Fitxer actualitzat al Workspace: {file_item['path']}")
             print(f"📄 Fitxer actualitzat al Workspace: {file_item['path']}")
             
         return saved_paths
@@ -230,49 +234,50 @@ class DeveloperAgent:
             if f.get("path", "").startswith("tests/") and (workspace_dir / f["path"]).exists()
         ]
 
-        # Fase 1: Executar tests directament associats a la issue
         if targeted_tests:
+            self.logger.info(f"Executant {len(targeted_tests)} test(s) específics de la Issue...")
             print(f"🎯 [Tests] Executant {len(targeted_tests)} test(s) específics de la Issue...")
             cmd = ["pytest", "-v", "-x", "--tb=short"] + targeted_tests
             try:
                 res = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(workspace_dir), timeout=35)
                 if res.returncode != 0:
                     output = (res.stdout or "") + "\n" + (res.stderr or "")
+                    self.logger.error("Els tests específics han fallat.")
                     return False, output.strip()
             except subprocess.TimeoutExpired:
+                self.logger.error("Timeout excedit durant l'execució dels tests específics.")
                 return False, "⏰ Timeout excedit durant l'execució dels tests específics."
 
-        # Fase 2: Executar bateria de tests unitaris de regressió
         unit_dir = workspace_dir / "tests" / "unit"
         if unit_dir.exists():
+            self.logger.info("Executant regressió de tests unitaris...")
             print("🛡️ [Tests] Executant regressió de tests unitaris...")
             cmd = ["pytest", "-v", "-x", "--tb=short", str(unit_dir)]
             try:
                 res = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(workspace_dir), timeout=35)
                 if res.returncode != 0:
                     output = (res.stdout or "") + "\n" + (res.stderr or "")
+                    self.logger.error("Els tests unitaris de regressió han fallat.")
                     return False, output.strip()
             except subprocess.TimeoutExpired:
+                self.logger.error("Timeout excedit durant la bateria de tests unitaris.")
                 return False, "⏰ Timeout excedit durant la bateria de tests unitaris."
 
         return True, ""
 
     def develop_and_test(self, issue_number: int, max_retries: int = 3):
+        self.logger.info(f"Iniciant desenvolupament automàtic per a la Issue #{issue_number}")
         print(f"\n🤖 [DeveloperAgent] Carregant la Issue #{issue_number} des de GitHub...")
         issue = self.github.get_issue(issue_number)
 
-        # 1. Preparar workspace duplicant el directori local (amb .env i eines)
         workspace_dir = self._prepare_workspace_environment(issue_number)
-
-        # 2. Sincronitzar tot el contingut oficial de la branca 'main' de GitHub
         self._download_main_branch_content(workspace_dir)
 
-        # 3. Crear la nova branca de treball a GitHub
         branch_name = f"feature/issue-{issue_number}"
+        self.logger.info(f"Creant branca remota '{branch_name}'...")
         print(f"🌿 [DeveloperAgent] Creant la branca remota '{branch_name}' a partir de 'main'...")
         self.github.create_branch(base_branch="main", new_branch=branch_name)
 
-        # 4. Llegir l'arbre del projecte i el contingut font del workspace
         repo_tree = self.github.get_repository_tree(ref="main")
         tree_str = "\n".join(repo_tree) if repo_tree else "Repositori buit"
         existing_files_content = self._read_workspace_source_files(workspace_dir)
@@ -291,37 +296,35 @@ class DeveloperAgent:
             system_prompt,
             response_schema=DeveloperPlan
         )
-        #print ("DEBUG:" + raw_response)
 
         try:
             data = self._parse_json_response(raw_response)
         except Exception as e:
-            print(f"❌ Error en extreure el JSON multi-fitxer: {e}")
+            self.logger.error(f"Error en extreure el JSON multi-fitxer: {e}")
             shutil.rmtree(workspace_dir, ignore_errors=True)
             return {"success": False, "attempts": 0}
 
         files_data = data.get("files", [])
         if not files_data:
-            print("⚠️ La IA no ha especificat cap fitxer per modificar/crear.")
+            self.logger.warning("La IA no ha especificat cap fitxer per modificar/crear.")
             shutil.rmtree(workspace_dir, ignore_errors=True)
             return {"success": False, "attempts": 0}
 
-        # 5. Escriure els fitxers modificats dins del Workspace
         self._write_files_to_workspace(files_data, workspace_dir)
 
-        # 6. Executar PyTest utilitzant l'entorn del Workspace
         env = os.environ.copy()
         src_workspace = str((workspace_dir / "src").resolve())
         env["PYTHONPATH"] = f"{src_workspace}:{env.get('PYTHONPATH', '')}"
 
         for attempt in range(1, max_retries + 1):
+            self.logger.info(f"Executant bateria de tests al Workspace (Intent {attempt}/{max_retries})")
             print(f"\n🧪 Executant bateria de tests al Workspace (Intent {attempt}/{max_retries})...")
             tests_passed, error_log = self._run_workspace_tests(workspace_dir, files_data, env)
 
             if tests_passed:
+                self.logger.info("Tots els tests han passat al Workspace satisfactòriament.")
                 print("✅ Tots els tests han passat al Workspace!")
                 
-                # 7. Publicar els canvis del workspace a la nova branca a GitHub
                 files_to_commit = [
                     {"path": item["path"], "content": (workspace_dir / item["path"]).read_text(encoding="utf-8")}
                     for item in files_data
@@ -331,7 +334,6 @@ class DeveloperAgent:
                 commit_msg = f"feat: resolució Issue #{issue_number} ({data.get('summary', 'multi-fitxer')})"
                 self.github.commit_and_push_files(branch_name, files_to_commit, commit_msg)
                 
-                # Neteja final del Workspace
                 shutil.rmtree(workspace_dir, ignore_errors=True)
 
                 files_summary = "\n".join([f"- `{item['path']}`" for item in files_to_commit])
@@ -349,6 +351,7 @@ class DeveloperAgent:
                     head_branch=branch_name,
                     base_branch="main"
                 )
+                self.logger.info(f"Pull Request creada correctament: {pr_result.get('url') if pr_result else 'N/A'}")
 
                 return {
                     "success": True,
@@ -357,6 +360,7 @@ class DeveloperAgent:
                     "pr_url": pr_result.get("url") if pr_result else None
                 }
             else:
+                self.logger.warning(f"Els tests han fallat (Intent {attempt}).")
                 print(f"❌ Els tests han fallat (Intent {attempt}).")
                 trimmed_log = error_log[:3500] if len(error_log) > 3500 else error_log
                 print("--- Error de PyTest ---")
@@ -381,21 +385,21 @@ class DeveloperAgent:
                         fix_data = self._parse_json_response(raw_response)
                         new_files = fix_data.get("files", [])
                         if new_files:
-                            # Fusió intel·ligent per clau 'path': preserva els fitxers correctes previs
                             files_dict = {f["path"]: f for f in files_data}
                             for item in new_files:
                                 files_dict[item["path"]] = item
                             files_data = list(files_dict.values())
                             self._write_files_to_workspace(new_files, workspace_dir)
                     except Exception as err:
-                        print(f"⚠️ Error durant la re-generació al Workspace: {err}")
+                        self.logger.error(f"Error durant la re-generació al Workspace: {err}")
 
         shutil.rmtree(workspace_dir, ignore_errors=True)
+        self.logger.error("L'agent ha assolit el límit de reintents sense poder resoldre els tests.")
         print("❌ L'agent ha assolit el límit de reintents sense poder resoldre els tests.")
         return {"success": False, "attempts": max_retries}
 
     def remediate_pull_request(self, pr_number: int, max_retries: int = 3):
-        """Remedia una PR que afecta múltiples fitxers basant-se en l'informe de Code Review."""
+        self.logger.info(f"Iniciant remediació multi-fitxer per a la PR #{pr_number}")
         print(f"\n🛠️ [DeveloperAgent] Iniciant remediació multi-fitxer per a la PR #{pr_number}...")
         
         pr = self.github.repo.get_pull(pr_number)
@@ -403,10 +407,10 @@ class DeveloperAgent:
         review_comments = self.github.get_pr_review_comments(pr_number)
         
         if not review_comments:
+            self.logger.warning("No s'han trobat comentaris de Code Review.")
             print("⚠️ No s'han trobat comentaris de Code Review.")
             return {"success": False}
 
-        # Preparar el workspace
         workspace_dir = self._prepare_workspace_environment(pr_number)
         self._download_main_branch_content(workspace_dir)
 
@@ -448,6 +452,7 @@ class DeveloperAgent:
             tests_passed, _ = self._run_workspace_tests(workspace_dir, files_data, env)
 
             if tests_passed:
+                self.logger.info("Tots els fitxers remediats han passat els tests!")
                 print("✅ Tots els fitxers remediats han passat els tests!")
                 files_to_commit = [
                     {"path": item["path"], "content": (workspace_dir / item["path"]).read_text(encoding="utf-8")}
@@ -457,10 +462,12 @@ class DeveloperAgent:
                 shutil.rmtree(workspace_dir, ignore_errors=True)
                 return {"success": True, "branch": branch_name}
             else:
+                self.logger.error("Els tests han fallat després de la remediació.")
                 print("❌ Els tests han fallat després de la remediació.")
                 shutil.rmtree(workspace_dir, ignore_errors=True)
                 return {"success": False}
         except Exception as e:
+            self.logger.error(f"Error en la remediació multi-fitxer: {e}")
             print(f"❌ Error en la remediació multi-fitxer: {e}")
             shutil.rmtree(workspace_dir, ignore_errors=True)
             return {"success": False}
