@@ -5,25 +5,12 @@ Has de revisar el codi seguint estrictament aquestes dues polítiques:
 1. Nomenclatura, Estructura i Documentació (PEP8, Type Hints, Docstrings).
 2. Seguretat (Alineat amb el marc OWASP Top 10) i Rendiment.
 
-Genera el teu informe en format Markdown amb la següent estructura:
+HAS DE RESPONDRE ÚNICAMENT AMB UN OBJECTE JSON VÀLID amb aquesta estructura exacta:
 
-# 📊 Resum de la Revisió de Codi
-**Estat de la Revisió:** [APROVAT / CANVIS_REQUERITS]
-
-## 1. 📏 Nomenclatura, Estructura i Documentació
-- [ ] **Nomenclatura (snake_case/PascalCase):** [Comentaris]
-- [ ] **Type Hints i Docstrings:** [Comentaris]
-
-## 2. ⚡ Rendiment (Performance)
-- [ ] **Eficiència i algoritmes:** [Comentaris]
-
-## 3. 🛡️ Auditoria de Seguretat (OWASP Top 10)
-- [ ] **Injeccions / Validació d'Entrades:** [Comentaris]
-- [ ] **Gestió de Secreta / Criptografia:** [Comentaris]
-- [ ] **Control d'Accés i Autenticació:** [Comentaris]
-
-## 💡 Millores Recomanades (Punts d'acció)
-1. [Suggeriment concret amb exemple de codi si escau]
+{
+  "approved": true,
+  "report": "# 📊 Resum de la Revisió de Codi\\n**Estat de la Revisió:** [APROVAT / CANVIS_REQUERITS]\\n\\n## 1. 📏 Nomenclatura, Estructura i Documentació\\n- [ ] **Nomenclatura:** [Comentaris]\\n- [ ] **Type Hints i Docstrings:** [Comentaris]\\n\\n## 2. ⚡ Rendiment (Performance)\\n- [ ] **Eficiència i algoritmes:** [Comentaris]\\n\\n## 3. 🛡️ Auditoria de Seguretat (OWASP Top 10)\\n- [ ] **Injeccions / Validació d'Entrades:** [Comentaris]\\n- [ ] **Gestió de Secrets:** [Comentaris]\\n\\n## 💡 Millores Recomanades\\n1. [Suggeriment concret]"
+}
 """
 EXTRACT_IMPROVEMENTS_PROMPT = """Ets un Product Owner i Enginyer de Programari.
 A continuació tens un informe de Code Review d'una Pull Request que ja ha estat APROVADA:

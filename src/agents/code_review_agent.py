@@ -53,29 +53,44 @@ class CodeReviewAgent:
                 return json.loads(fixed_str, strict=False)
 
     def review_pull_request(self, pr_number: int) -> dict:
-        """Executa l'auditoria de seguretat (OWASP Top 10), nomenclatura i performance sobre la PR."""
-        print(f"\n🔍 [CodeReviewAgent] Analitzant els canvis de la Pull Request #{pr_number}...")
-        
+        '''Executa l auditoria de seguretat, nomenclatura i rendiment sobre la PR.'''
+        self.logger.info(f'Inici de revisio de codi per a la Pull Request #{pr_number}.')
+        print(f'\n🔍 [CodeReviewAgent] Analitzant els canvis de la Pull Request #{pr_number}...')
+
         diff_content = self.github.get_pull_request_files(pr_number)
-        
         prompt = (
-            f"POLÍTICA DE CODI I SEGURETAT (OWASP TOP 10):\n{self.code_policy}\n\n"
-            f"CANVIS DE LA PULL REQUEST (DIFF):\n{diff_content}"
+            f'POLÍTICA DE CODI I SEGURETAT (OWASP TOP 10):\n{self.code_policy}\n\n'
+            f'CANVIS DE LA PULL REQUEST (DIFF):\n{diff_content}'
         )
-        
-        print("🤖 [CodeReviewAgent] Executant auditoria de seguretat, nomenclatura i performance amb Gemini...")
-        review_report = self.llm.generate_task_spec(prompt, CODE_REVIEW_SYSTEM_PROMPT)
-        
-        print("💬 [CodeReviewAgent] Publicant informe de revisió a GitHub...")
-        self.github.post_pr_comment(pr_number, review_report)
-        
-        is_approved = "APROVAT" in review_report and "CANVIS_REQUERITS" not in review_report
-        
+
+        print('🤖 [CodeReviewAgent] Executant auditoria amb Gemini...')
+        raw_response = self.llm.generate_task_spec(prompt, CODE_REVIEW_SYSTEM_PROMPT)
+
+        # Extreiem el Markdown de la resposta JSON o fem el parsejat resilient
+        report_markdown = raw_response
+        try:
+            parsed = self._parse_json_response(raw_response)
+            if isinstance(parsed, dict):
+                # Si el JSON conté una clau 'report', 'summary' o 'content', extreiem el contingut Markdown
+                report_markdown = parsed.get('report') or parsed.get('summary') or parsed.get('content') or raw_response
+        except Exception:
+            # Si no és JSON o falla el parsejat, fem servir el text directament
+            report_markdown = raw_response
+
+        print('💬 [CodeReviewAgent] Publicant informe de revisió a GitHub...')
+        self.github.post_pr_comment(pr_number, report_markdown)
+
+        is_approved = 'APROVAT' in report_markdown and 'CANVIS_REQUERITS' not in report_markdown
+        self.logger.info(
+            f'Revisió finalitzada per a la PR #{pr_number}. Aprovat: {is_approved}.'
+        )
+
         return {
-            "pr_number": pr_number,
-            "approved": is_approved,
-            "report": review_report
+            'pr_number': pr_number,
+            'approved': is_approved,
+            'report': report_markdown,
         }
+
 
     def create_future_improvement_issues(self, pr_number: int, review_report: str) -> list:
         """Extreu millores a futur de l'informe de review i crea GitHub Issues amb l'etiqueta 'enhancement'."""
