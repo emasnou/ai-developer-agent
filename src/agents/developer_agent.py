@@ -23,20 +23,39 @@ class DeveloperAgent:
 
     def _parse_json_response(self, text: str) -> dict:
         """Extreu i parseja un objecte JSON de la resposta del LLM de manera resilient."""
+        # Intenta utilitzar la llibreria json_repair si està instal·lada
+        try:
+            from json_repair import repair_json
+            parsed = repair_json(text, return_objects=True)
+            if isinstance(parsed, dict):
+                return parsed
+        except ImportError:
+            pass
+
+        # Fallback manual si json_repair no està instal·lat
         cleaned = re.sub(r'```json\s*', '', text)
         cleaned = re.sub(r'```\s*$', '', cleaned)
+        
         match = re.search(r'\{.*\}', cleaned, re.DOTALL)
         json_str = match.group(0) if match else cleaned.strip()
 
         try:
             return json.loads(json_str, strict=False)
         except json.JSONDecodeError:
+            # Reemplacem cometes no escapades o caràcters de control dins de valors multilínia
             sanitized = re.sub(
                 r'[\x00-\x1F\x7F]',
                 lambda m: f"\\u{ord(m.group(0)):04x}" if m.group(0) not in ('\n', '\r', '\t') else m.group(0),
                 json_str
             )
-            return json.loads(sanitized, strict=False)
+            try:
+                return json.loads(sanitized, strict=False)
+            except json.JSONDecodeError:
+                # Reemplaça cometes problemàtiques que no estiguin precedides per \
+                fixed_str = re.sub(r'(?<!\\)"', r'\"', json_str)
+                # Restaura cometes de les claus principals del JSON
+                fixed_str = re.sub(r'\\"(summary|files|path|action|content)\\"', r'"\1"', fixed_str)
+                return json.loads(fixed_str, strict=False)
 
     def _prepare_workspace_environment(self, issue_number: int) -> Path:
         """
