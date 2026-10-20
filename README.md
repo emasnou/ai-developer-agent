@@ -1,17 +1,37 @@
 # 🤖 AI Developer Agent
 
-Un agent autònom basat en IA dissenyat per automatitzar el cicle de vida del desenvolupament de programari: des de l'anàlisi de requisits i la creació de tasques amb la seva matriu de qualitat (QA), fins a la generació de codi, l'execució de tests automatitzats i la publicació a GitHub.
+Un agent autònom basat en Intel·ligència Artificial dissenyat per automatitzar el cicle complet de vida del desenvolupament de programari: des de l'anàlisi de requisits i la creació de tasques estructurades a GitHub amb matriu de qualitat (QA), fins a la generació de codi multi-fitxer, l'execució i auto-correcció mitjançant tests automatitzats, l'obertura de Pull Requests i l'auditoria de seguretat i bones pràctiques de codi.
 
 ---
 
 ## 📐 Arquitectura del Sistema
 
-El projecte s'organitza en 4 capes principals:
+El sistema s'estructura en diversos agents i capes de servei especialitzades:
 
-1. **Cervell / Model LLM:** Utilitza l'API oficial de **Google Gemini** (`google-genai`) per al raonament i la generació d'especificacions estructurades.
-2. **Orquestrador de Tasques:** Integració directa amb l'API de **GitHub Issues** per a la creació automatitzada de requeriments, criteris d'acceptació (BDD) i matriu de proves de QA.
-3. **Agent Desenvolupador & Entorn d'Execució:** Generació de codi Python i tests unitaris (`pytest`) en un entorn d'execució segur.
-4. **Resiliència:** Sistema de reintents automàtics amb retard expositiu (`tenacity`) per gestionar pics de caràcter temporal o alta demanda a l'API del LLM.
+```mermaid
+flowchart TD
+    User([👤 Usuari / Product Owner]) -->|Requeriment funcional| Analyst[📝 AnalystAgent]
+    Analyst -->|Crea Issue BDD + Matriu QA| GitHub[(GitHub Issues)]
+    GitHub -->|Issue seleccionada| Developer[🛠️ DeveloperAgent]
+    Developer -->|Workspace aïllat & PyTest| DevLoop{Tests OK?}
+    DevLoop -->|No: Auto-correcció màx 3| Developer
+    DevLoop -->|Sí: Commit & Push| PR[(Pull Request)]
+    PR -->|Auditoria OWASP + PEP8| Reviewer[🔍 CodeReviewAgent]
+    Reviewer -->|Canvis requerits| Remediate[🛠️ Remediació Developer]
+    Reviewer -->|Aprovat| Done([🚀 Codi Llest per a Producció])
+    Remediate --> PR
+```
+
+1. **Agent Analista (`AnalystAgent`)**: Transforma requeriments d'usuari en especificacions detallades a GitHub Issues amb Històries d'Usuari, Criteris d'Acceptació BDD (*Given-When-Then*) i Matriu de Proves QA.
+2. **Agent Desenvolupador (`DeveloperAgent`)**: Prepara un workspace aïllat, descarrega l'estat de `main`, crea branques `feature/issue-<num>`, genera/modifica múltiples fitxers de codi i tests, i publica automàticament la Pull Request un cop validat.
+3. **Agent Revisor de Codi (`CodeReviewAgent`)**: Audita automàticament els canvis d'una PR analitzant nomenclatura (PEP8, tipat estàtic, docstrings), eficiència d'algoritmes i vulnerabilitats de seguretat (OWASP Top 10). Publica l'informe a la PR i proposa noves Issues de millora a futur (*enhancement*).
+4. **Resiliència Multi-Model LLM (`LLMService`)**:
+   - Model principal: `gemini-3.8-flash`.
+   - Model de reserva (*fallback* automàtic): `gemini-3.5-flash-lite` davant pics d'alta demanda (HTTP 503 / ServerError) gestionat amb reintents exponencials (`tenacity`).
+5. **Sortides Estructurades (Structured Outputs amb Pydantic)**: Esquemes estrictes a `src/schemas/agent_schemas.py` que garanteixen matemàticament generacions de JSON vàlides en qualsevol model de LLM.
+6. **Execució de Tests Intel·ligent**:
+   - **Execució en 2 fases**: Prova primer els tests nous o modificats (`-x --tb=short`) i posteriorment la regressió de tests unitaris, aïllant la suite de dependències externes de xarxa.
+   - **Fusió intel·ligent**: Durant els cicles d'auto-correcció, es fusionen quirúrgicament els canvis preservant els fitxers correctes previs.
 
 ---
 
@@ -20,73 +40,135 @@ El projecte s'organitza en 4 capes principals:
 ```text
 ai-developer-agent/
 ├── .github/
-│   ├── ISSUE_TEMPLATE/
-│   └── workflows/
+│   └── workflows/                # Pipelines de CI/CD
+├── docs/
+│   └── code_policy.md            # Política de codi, estil, OWASP Top 10 i PyTest
 ├── src/
 │   ├── agents/
 │   │   ├── analyst_agent.py      # Agent Analista (Product Owner)
-│   │   └── developer_agent.py    # Agent Desenvolupador (Coder & Tester)
-│   ├── services/
-│   │   ├── github_service.py     # Integració amb l'API de GitHub
-│   │   └── llm_service.py        # Client de Gemini amb reintents automàtics
+│   │   ├── developer_agent.py    # Agent Desenvolupador (Coder, Tester & Workspace)
+│   │   └── code_review_agent.py  # Agent Auditor de Codi (Code Reviewer)
 │   ├── prompts/
-│   │   └── analyst_prompts.py    # Plantilles de prompt per a l'anàlisi
+│   │   ├── analyst_prompts.py    # Prompts de l'agent analista
+│   │   ├── developer_prompts.py  # Prompts i regles d'enginyeria del desenvolupador
+│   │   └── review_prompts.py     # Prompts per a revisió de codi i millores
+│   ├── schemas/
+│   │   └── agent_schemas.py      # Models Pydantic per a Structured Outputs del LLM
+│   ├── services/
+│   │   ├── github_service.py     # Integració nativa amb l'API de GitHub (PyGithub)
+│   │   └── llm_service.py        # Client de Gemini amb fallback i reintents automàtics
 │   ├── utils/
-│   │   └── config.py             # Configuració i carrega de variables d'entorn
-│   └── main.py                   # Interfície CLI principal
+│   │   └── config.py             # Configuració i càrrega de variables d'entorn
+│   └── main.py                   # Interfície CLI interactiva
 ├── tests/
-│   ├── unit/
-│   └── integration/
-├── .env.example
-├── .gitignore
-├── README.md
-└── requirements.txt# ai-developer-agent
+│   ├── unit/                     # Bateria de tests unitaris
+│   │   ├── test_json_parsing.py  # Validació de robustesa del parser JSON
+│   │   └── test_password_reset.py# Tests del mòdul de seguretat
+│   └── integration/              # Tests d'integració amb serveis externs
+├── pyproject.toml                # Configuració de packaging i PyTest
+├── requirements.txt              # Dependències del projecte
+├── .env.example                  # Plantilla de variables d'entorn
+└── README.md
+```
+
+---
 
 ## 🚀 Configuració i Instal·lació
 
 ### 1. Requisits Previs
 * **Python**: Versió 3.10 o superior.
-* **GitHub**: Un repositori (privat o públic).
-* **GitHub Token**: Un *Personal Access Token (PAT)* amb permisos de `repo`.
-* **API Key de Gemini**: Una clau d'API de Google Gemini.
+* **Compte de GitHub**: Un repositori públic o privat on executar les tasques.
+* **GitHub Token**: Un *Personal Access Token (classic o fine-grained)* amb permisos de lectura i escriptura sobre el repositori (`repo`, `issues`, `pull-requests`).
+* **Google Gemini API Key**: Clau d'accés a l'API de Google GenAI.
 
 ### 2. Instal·lació de Dependències
-Clona el repositori i instal·la els paquets necessaris utilitzant `pip`:
+Clona el repositori i instal·la les dependències del projecte:
 
 ```bash
+git clone https://github.com/emasnou/ai-developer-agent.git
+cd ai-developer-agent
 pip install -r requirements.txt
+```
 
->### 3. Configuració de Variables d'Entorn
-Crea un fitxer `.env` a l'arrel del projecte utilitzant la plantilla `.env.example`:
+### 3. Configuració de Variables d'Entorn
+Crea el teu fitxer `.env` a partir de la plantilla d'exemple:
 
 ```bash
 cp .env.example .env
 ```
 
-Edita el fitxer `.env` i afegeix-hi les teves credencials i claus d'API:
+Edita el fitxer `.env` i configura les credencials:
 
 ```env
-GITHUB_TOKEN=ghp_el_teu_github_token_aqui
-GITHUB_REPO=el-teu-usuari/nom-del-repositori
+GITHUB_TOKEN=ghp_el_teu_token_de_github
+GITHUB_REPO=usuari_o_org/nom-del-repositori
 GEMINI_API_KEY=la_teva_clau_api_de_gemini
 ```
 
 ---
 
-## 💻 Ús
+## 💻 Ús de l'Agent
 
-Per executar l'agent en mode interactiu des de la línia de comandes:
+Per iniciar el panell de control interactiu de l'agent:
 
 ```bash
-python3 -m src.main
+python3 src/main.py
 ```
 
-L'agent et demanarà:
-1. Un **títol** per a la tasca.
-2. La **descripció o requeriment** en text pla de la funcionalitat que vols desenvolupar.
+El menú principal et permetrà escollir entre les diferents capacitats del cicle autònom:
 
-L'**Agent Analista** processarà la petició mitjançant Gemini i publicarà immediatament una nova Issue a GitHub estructurada amb:
-* 📝 **Història d'Usuari** (*Com a... Vull... Per a...*)
-* 🎯 **Criteris d'Acceptació** (*Given-When-Then*)
-* 🧪 **Matriu de Proves de Qualitat** (*Tests unitaris i d'integració*)
+```text
+============================================================
+🤖 AGENT D'IA PER A DESENVOLUPAMENT AUTÒNOM DE PROGRAMARI
+============================================================
+1. [Analista] Crear una nova Issue a GitHub des d'un requeriment
+2. [Desenvolupador] Desenvolupar i provar una Issue de GitHub
+3. [Code Reviewer] Auditar una Pull Request (Nomenclatura + OWASP Top 10)
+4. [Remediació] Refactoritzar i corregir una PR segons el Code Review
+5. Sortir
+```
 
+### 1. Mode Analista (Opció 1)
+Introdueix un títol i una descripció funcional en llenguatge natural. L'agent analista redactarà la Història d'Usuari completa i la matriu de proves de QA, obrint directament la tasca a GitHub amb les etiquetes corresponents (`enhancement`, `agent-analyst`).
+
+### 2. Mode Desenvolupador (Opció 2)
+Mostra el llistat d'Issues obertes al repositori. En seleccionar-ne una:
+1. Descarrega l'estat oficial de `main` a un workspace aïllat `.workspace/issue_<num>`.
+2. Crea una branca remota `feature/issue-<num>`.
+3. Genera el codi font i tests unitaris necessaris utilitzant Structured Outputs.
+4. Executa PyTest de forma automàtica. Si algun test falla, activa l'auto-correcció quirúrgica (fins a 3 cicles).
+5. Un cop passats tots els tests, fa *commit*, *push* i obre una Pull Request detallada a GitHub.
+
+### 3. Mode Code Reviewer (Opció 3)
+Audita el *diff* d'una Pull Request oberta segons la política interna [`docs/code_policy.md`](docs/code_policy.md):
+* **Nomenclatura i estil:** PEP8, Type Hints complets i Docstrings descriptius.
+* **Seguretat:** Validacions OWASP Top 10 (evitació d'injeccions, gestió segura de secrets, protecció contra atacs de repetició).
+* **Rendiment:** Evitació de bucles innecessaris o operacions bloquejants.
+* **Publicació:** Deixa un informe complet com a comentari a la PR i genera automàticament noves Issues per a suggeriments o millores futures.
+
+### 4. Mode Remediació (Opció 4)
+Llegeix els comentaris i canvis requerits d'una PR auditada prèviament, refactoritza els fitxers necessaris al workspace aïllat, valida que els tests continuïn passant i actualitza la branca de la PR.
+
+---
+
+## 🧪 Execució de Tests del Projecte
+
+Pots executar tota la bateria de proves del sistema mitjançant `pytest`:
+
+```bash
+# Execució de tots els tests
+pytest -v
+
+# Execució específica de tests unitaris
+pytest -v tests/unit/
+```
+
+---
+
+## 🛡️ Polítiques de Codi i Bones Pràctiques
+
+El comportament i les restriccions del codi generat per la IA es troben regulats a [`docs/code_policy.md`](docs/code_policy.md), incloent:
+* Directrius de nomenclatura en Python (`snake_case`, `PascalCase`, `UPPER_SNAKE_CASE`).
+* Aïllament en proves utilitzant la fixture `tmp_path` de pytest.
+* Creació defensiva de directoris per a fitxers i logs.
+* Validació criptogràfica i protocols contra condicions de cursa (TOCTOU).
