@@ -17,7 +17,7 @@ class CodeReviewAgent:
         policy_path = Path("docs/code_policy.md")
         self.code_policy = policy_path.read_text() if policy_path.exists() else "Aplica PEP8 i OWASP Top 10."
 
-def _parse_json_response(self, text: str) -> dict:
+    def _parse_json_response(self, text: str) -> dict:
         """Extreu i parseja un objecte JSON de la resposta del LLM de manera resilient."""
         # Intenta utilitzar la llibreria json_repair si està instal·lada
         try:
