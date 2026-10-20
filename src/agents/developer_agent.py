@@ -30,7 +30,7 @@ class DeveloperAgent:
         cleaned = re.sub(r'```(json|yaml)?\s*', '', text)
         cleaned = re.sub(r'```\s*$', '', cleaned)
 
-        # 2. Cercar des del primer '{' o el primer 'summary:'
+        # 2. Cercar des del primer '{' fins a l'últim '}'
         first_brace = cleaned.find('{')
         last_brace = cleaned.rfind('}')
 
@@ -39,7 +39,7 @@ class DeveloperAgent:
         else:
             json_candidate = cleaned.strip()
 
-        # 3. Primer intent: json_repair
+        # 3. Primer intent: json_repair (és el més eficaç gestionant \escapes invàlids)
         try:
             from json_repair import repair_json
             repaired = repair_json(json_candidate, return_objects=True)
@@ -48,7 +48,14 @@ class DeveloperAgent:
         except Exception:
             pass
 
-        # 4. Segon intent: parsing amb PyYAML (molt més tolerant amb codi Python multilínia)
+        # 4. Segon intent: Sanititzar barres invertides solitàries no vàlides per a JSON (regex)
+        sanitized_candidate = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_candidate)
+        try:
+            return json.loads(sanitized_candidate, strict=False)
+        except json.JSONDecodeError:
+            pass
+
+        # 5. Tercer intent: PyYAML (suporta cadenes de Python amb escapes naturals)
         try:
             parsed_yaml = yaml.safe_load(cleaned)
             if isinstance(parsed_yaml, dict) and "files" in parsed_yaml:
@@ -56,12 +63,8 @@ class DeveloperAgent:
         except Exception:
             pass
 
-        # 5. Tercer intent: json.loads natiu amb strict=False
-        try:
-            return json.loads(json_candidate, strict=False)
-        except json.JSONDecodeError as err:
-            print(f"❌ Error critic de parsing en la resposta de Gemini: {err}")
-            raise err
+        # Fallback final: intent natiu
+        return json.loads(json_candidate, strict=False)
 
     def _prepare_workspace_environment(self, issue_number: int) -> Path:
         """

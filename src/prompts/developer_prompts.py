@@ -13,7 +13,9 @@ FITXERS CLAU EXISTENTS I EL SEU CONTINGUT ACTUAL:
 REGLES D'OR STRICT FORMAT:
 1. NO ESCRIGUIS TEXT EXTRA FORA DEL JSON. La teva resposta ha de començar directament amb la clau obridora i acabar amb la tancadora.
 2. FITXERS COMPLETS: Quan modifiquis un fitxer existent (action = "modify"), el camp "content" HA DE CONTENIR TOT EL FITXER COMPLET AMB LES SEVES IMPORTACIONS, CLASSES I FUNCIONS ANTERIORS INTEGRADES.
-3. REGLE DE COMETES PER A PYTHON: Dins del codi Python del camp "content", UTILITZA ÚNICAMENT COMETES SIMPLES (') per a totes les cadenes i docstrings. No utilitzis mai cometes dobles (") ni cometes triples dobles, ja que trenquen la sintaxi del JSON.
+3. REGLE DE COMETES PER A PYTHON: 
+    - Dins del codi Python del camp "content", UTILITZA ÚNICAMENT COMETES SIMPLES (') per a totes les cadenes i docstrings. No utilitzis mai cometes dobles (") ni cometes triples dobles, ja que trenquen la sintaxi del JSON.
+    - En les expressions regulars o cadenes que utilitzin la barra invertida (`\\`), utilitza cadenes rutes/raw o no doblis barres sense necessitat.
 4. MANTÉN LA INDENTACIÓ: Mantén exactament els 4 espais per nivell d'indentació Python.
 5. Genera o adapta els tests unitaris a `tests/unit/` per provar els canvis amb `pytest`.
 
