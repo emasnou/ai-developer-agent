@@ -5,6 +5,7 @@ import ast
 import shutil
 import subprocess
 from pathlib import Path
+from json_repair import repair_json
 from src.services.llm_service import LLMService
 from src.services.github_service import GitHubService
 from src.prompts.developer_prompts import (
@@ -22,40 +23,42 @@ class DeveloperAgent:
         self.code_policy = policy_path.read_text(encoding="utf-8") if policy_path.exists() else "Aplica PEP8 i OWASP Top 10."
 
     def _parse_json_response(self, text: str) -> dict:
-        """Extreu i parseja un objecte JSON de la resposta del LLM de manera resilient."""
-        # Intenta utilitzar la llibreria json_repair si està instal·lada
-        try:
-            from json_repair import repair_json
-            parsed = repair_json(text, return_objects=True)
-            if isinstance(parsed, dict):
-                return parsed
-        except ImportError:
-            pass
-
-        # Fallback manual si json_repair no està instal·lat
+        """Extreu i parseja un objecte JSON de la resposta del LLM de manera ultra-resilient."""
+        # 1. Netejar blocs de codi Markdown
         cleaned = re.sub(r'```json\s*', '', text)
         cleaned = re.sub(r'```\s*$', '', cleaned)
         
-        match = re.search(r'\{.*\}', cleaned, re.DOTALL)
-        json_str = match.group(0) if match else cleaned.strip()
+        # 2. Cercar exactament des del primer '{' fins a l'últim '}' (ignora text o salutacions prèvies)
+        first_brace = cleaned.find('{')
+        last_brace = cleaned.rfind('}')
+        
+        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+            json_str = cleaned[first_brace:last_brace + 1]
+        else:
+            json_str = cleaned.strip()
 
+        # 3. Primer intent: parsing natiu
         try:
             return json.loads(json_str, strict=False)
         except json.JSONDecodeError:
-            # Reemplacem cometes no escapades o caràcters de control dins de valors multilínia
-            sanitized = re.sub(
-                r'[\x00-\x1F\x7F]',
-                lambda m: f"\\u{ord(m.group(0)):04x}" if m.group(0) not in ('\n', '\r', '\t') else m.group(0),
-                json_str
-            )
-            try:
-                return json.loads(sanitized, strict=False)
-            except json.JSONDecodeError:
-                # Reemplaça cometes problemàtiques que no estiguin precedides per \
-                fixed_str = re.sub(r'(?<!\\)"', r'\"', json_str)
-                # Restaura cometes de les claus principals del JSON
-                fixed_str = re.sub(r'\\"(summary|files|path|action|content)\\"', r'"\1"', fixed_str)
-                return json.loads(fixed_str, strict=False)
+            pass
+
+        # 4. Segon intent: Utilitzar json_repair per arreglar cometes, text o caràcters de control
+        try:
+            from json_repair import repair_json
+            repaired = repair_json(json_str, return_objects=True)
+            if isinstance(repaired, dict):
+                return repaired
+        except Exception as e:
+            print(f"⚠️ Alerta en executar json_repair: {e}")
+
+        # 5. Tercer intent: Sanitització manual extrema de caràcters de control
+        sanitized = re.sub(
+            r'[\x00-\x1F\x7F]',
+            lambda m: f"\\u{ord(m.group(0)):04x}" if m.group(0) not in ('\n', '\r', '\t') else m.group(0),
+            json_str
+        )
+        return json.loads(sanitized, strict=False)
 
     def _prepare_workspace_environment(self, issue_number: int) -> Path:
         """
