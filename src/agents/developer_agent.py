@@ -218,6 +218,45 @@ class DeveloperAgent:
             
         return saved_paths
 
+    def _run_workspace_tests(self, workspace_dir: Path, files_data: list[dict], env: dict) -> tuple[bool, str]:
+        """
+        Executa els tests en dues fases:
+        1. Tests directament afectats/creats per la issue (-x, --tb=short).
+        2. Tests unitaris de regressió (sense dependències de xarxa externa).
+        """
+        targeted_tests = [
+            str(workspace_dir / f["path"])
+            for f in files_data
+            if f.get("path", "").startswith("tests/") and (workspace_dir / f["path"]).exists()
+        ]
+
+        # Fase 1: Executar tests directament associats a la issue
+        if targeted_tests:
+            print(f"🎯 [Tests] Executant {len(targeted_tests)} test(s) específics de la Issue...")
+            cmd = ["pytest", "-v", "-x", "--tb=short"] + targeted_tests
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(workspace_dir), timeout=35)
+                if res.returncode != 0:
+                    output = (res.stdout or "") + "\n" + (res.stderr or "")
+                    return False, output.strip()
+            except subprocess.TimeoutExpired:
+                return False, "⏰ Timeout excedit durant l'execució dels tests específics."
+
+        # Fase 2: Executar bateria de tests unitaris de regressió
+        unit_dir = workspace_dir / "tests" / "unit"
+        if unit_dir.exists():
+            print("🛡️ [Tests] Executant regressió de tests unitaris...")
+            cmd = ["pytest", "-v", "-x", "--tb=short", str(unit_dir)]
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(workspace_dir), timeout=35)
+                if res.returncode != 0:
+                    output = (res.stdout or "") + "\n" + (res.stderr or "")
+                    return False, output.strip()
+            except subprocess.TimeoutExpired:
+                return False, "⏰ Timeout excedit durant la bateria de tests unitaris."
+
+        return True, ""
+
     def develop_and_test(self, issue_number: int, max_retries: int = 3):
         print(f"\n🤖 [DeveloperAgent] Carregant la Issue #{issue_number} des de GitHub...")
         issue = self.github.get_issue(issue_number)
@@ -275,26 +314,11 @@ class DeveloperAgent:
         src_workspace = str((workspace_dir / "src").resolve())
         env["PYTHONPATH"] = f"{src_workspace}:{env.get('PYTHONPATH', '')}"
 
-        pytest_cmd = ["pytest", "-v", str(workspace_dir / "tests")]
-
         for attempt in range(1, max_retries + 1):
             print(f"\n🧪 Executant bateria de tests al Workspace (Intent {attempt}/{max_retries})...")
-            
-            try:
-                test_result = subprocess.run(
-                    pytest_cmd,
-                    capture_output=True,
-                    text=True,
-                    env=env,
-                    cwd=str(workspace_dir),
-                    timeout=30
-                )
-            except subprocess.TimeoutExpired:
-                print("⏰ Timeout de 30s excedit durant PyTest.")
-                shutil.rmtree(workspace_dir, ignore_errors=True)
-                return {"success": False, "attempts": attempt}
+            tests_passed, error_log = self._run_workspace_tests(workspace_dir, files_data, env)
 
-            if test_result.returncode == 0:
+            if tests_passed:
                 print("✅ Tots els tests han passat al Workspace!")
                 
                 # 7. Publicar els canvis del workspace a la nova branca a GitHub
@@ -334,18 +358,18 @@ class DeveloperAgent:
                 }
             else:
                 print(f"❌ Els tests han fallat (Intent {attempt}).")
-                error_log = test_result.stdout or test_result.stderr
+                trimmed_log = error_log[:3500] if len(error_log) > 3500 else error_log
                 print("--- Error de PyTest ---")
-                print(error_log)
+                print(trimmed_log)
                 
                 if attempt < max_retries:
-                    print("\n🔄 [DeveloperAgent] Sol·licitant auto-correcció al Workspace...")
+                    print("\n🔄 [DeveloperAgent] Sol·licitant auto-correcció quirúrgica al Workspace...")
                     files_summary_text = "\n".join([f"Fitxer: {f['path']}\n{f['content']}\n" for f in files_data])
                     
                     fix_prompt = DEVELOPER_FIX_PROMPT.format(
                         code_policy=self.code_policy,
                         files_summary=files_summary_text,
-                        error_log=error_log
+                        error_log=trimmed_log
                     )
                     
                     try:
@@ -354,9 +378,15 @@ class DeveloperAgent:
                             system_prompt,
                             response_schema=DeveloperPlan
                         )
-                        data = self._parse_json_response(raw_response)
-                        files_data = data.get("files", files_data)
-                        self._write_files_to_workspace(files_data, workspace_dir)
+                        fix_data = self._parse_json_response(raw_response)
+                        new_files = fix_data.get("files", [])
+                        if new_files:
+                            # Fusió intel·ligent per clau 'path': preserva els fitxers correctes previs
+                            files_dict = {f["path"]: f for f in files_data}
+                            for item in new_files:
+                                files_dict[item["path"]] = item
+                            files_data = list(files_dict.values())
+                            self._write_files_to_workspace(new_files, workspace_dir)
                     except Exception as err:
                         print(f"⚠️ Error durant la re-generació al Workspace: {err}")
 
@@ -415,18 +445,9 @@ class DeveloperAgent:
             src_workspace = str((workspace_dir / "src").resolve())
             env["PYTHONPATH"] = f"{src_workspace}:{env.get('PYTHONPATH', '')}"
 
-            pytest_cmd = ["pytest", "-v", str(workspace_dir / "tests")]
+            tests_passed, _ = self._run_workspace_tests(workspace_dir, files_data, env)
 
-            test_result = subprocess.run(
-                pytest_cmd,
-                capture_output=True,
-                text=True,
-                env=env,
-                cwd=str(workspace_dir),
-                timeout=30
-            )
-
-            if test_result.returncode == 0:
+            if tests_passed:
                 print("✅ Tots els fitxers remediats han passat els tests!")
                 files_to_commit = [
                     {"path": item["path"], "content": (workspace_dir / item["path"]).read_text(encoding="utf-8")}

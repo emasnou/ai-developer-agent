@@ -24,3 +24,8 @@
 - **A05: Security Misconfiguration**: No exposar traces d'error o dades sensibles a les respostes de l'API.
 - **A07: Identification & Authentication Failures**: Fórmules de recuperació de contrasenya sense revelar existència d'usuaris i amb tokens d'un sol ús i expiració breu.
 
+## 5. Disseny de Proves i Aïllament (PyTest Best Practices)
+- **Aïllament d'I/O (`tmp_path`)**: Els tests que generen fitxers o logs han d'utilitzar sempre la fixture `tmp_path` de pytest i no escriure a directoris arrel del projecte.
+- **Eficiència en límits i rotació**: Per provar comportaments com la rotació de fitxers, limitar el paràmetre de mida (`maxBytes=500` o `1024`) per validar-lo en mil·lisegons, evitant escriure grans volums de dades en bucles lents.
+- **Canvis Mínims en Components Existents**: Modificar exclusivament les línies necessàries en fitxers existents per incorporar noves funcionalitats, preservant totes les signatures i implementacions prèvies.
+

@@ -10,12 +10,18 @@ ESTRUCTURA DEL REPOSITORI ACTUAL:
 FITXERS CLAU EXISTENTS I EL SEU CONTINGUT ACTUAL:
 {existing_files_content}
 
-REGLES D'OR STRICT FORMAT:
+REGLES D'OR STRICT FORMAT I DISSENY DE CODI:
 1. NO ESCRIGUIS TEXT EXTRA FORA DEL JSON. La teva resposta ha de començar directament amb la clau obridora i acabar amb la tancadora.
-2. FITXERS COMPLETS: Quan modifiquis un fitxer existent (action = "modify"), el camp "content" HA DE CONTENIR TOT EL FITXER COMPLET AMB LES SEVES IMPORTACIONS, CLASSES I FUNCIONS ANTERIORS INTEGRADES.
-3. CODI PYTHON COMPLET I FUNCIONAL: Assegura't que tot el codi dins del camp "content" sigui Python sintàcticament vàlid, executable i ben estructurat.
-4. MANTÉN LA INDENTACIÓ: Mantén exactament els 4 espais per nivell d'indentació Python.
-5. Genera o adapta els tests unitaris a `tests/unit/` per provar els canvis amb `pytest`.
+2. FITXERS COMPLETS I CANVIS QUIRÚRGICS:
+    - Quan modifiquis un fitxer existent (action = "modify"), el camp "content" HA DE CONTENIR TOT EL FITXER COMPLET AMB LES SEVES IMPORTACIONS, CLASSES I FUNCIONS ANTERIORS INTEGRADES.
+    - PRESERVA TOT EL CODI EXISTENT: Mai eliminis, retallis o simplifiquis mètodes o funcionalitats existents dels fitxers. Si només cal integrar una eina (com un Logger), limita't a afegir la importació i les crides pertinents sense alterar la lògica subjacent.
+3. CODI DEFESIU PER A FITXERS I LOGS:
+    - Qualsevol mòdul que gestioni fitxers (com `src/utils/logger.py`) ha d'assegurar la creació automàtica del directori pare abans d'escriure (ex: `Path(log_file).parent.mkdir(parents=True, exist_ok=True)`).
+4. DISSENY EFICIENT DE TESTS AMB PYTEST:
+    - AÏLLAMENT TOTAL: Els tests unitaris i d'integració mai han d'escriure a carpetes de producció directament. Utilitza SEMPRE la fixture `tmp_path` de pytest per a fitxers de log temporals.
+    - PROVES DE ROTACIÓ O LÍMITS: Per provar rotació de fitxers (ex: rotació d'1 MB), NO escriguis 1 MB de línies en bucles lents a disc. Configura un paràmetre reduït al test (ex: `maxBytes=1024` o `monkeypatch`) per validar la rotació en mil·lisegons sense bloquejos de fitxer ni timeouts.
+5. MANTÉN LA INDENTACIÓ: Mantén exactament els 4 espais per nivell d'indentació Python.
+6. Genera o adapta els tests a `tests/unit/` i opcionalment `tests/integration/` per provar els canvis amb `pytest`.
 
 HAS DE RESPONDRE ÚNICAMENT AMB UN OBJECTE JSON VÀLID (sense text addicional ni blocs de markdown fora del JSON) amb aquesta estructura exactament:
 
@@ -45,10 +51,14 @@ Fitxers afectats:
 Error de PyTest:
 {error_log}
 
-Analitza l'error i dona'm una versió corregida de TOTS els fitxers necessaris dins de l'array "files".
+INSTRUCCIONS DE CORRECCIÓ LOCALITZADA:
+1. Analitza la traça exacta de l'error (línia, asserció o excepció) i corregeix la causa arrel.
+2. MODIFICA ÚNICAMENT els fitxers que realment necessiten canvis per solucionar el test que falla. Si un fitxer ja era correcte, no cal que el retornis o mantén-lo intacte.
+3. Assegura't que els tests utilitzin `tmp_path` per a fitxers i evitin bucles lents de generació massiva de dades.
+
 Respon ÚNICAMENT amb un objecte JSON vàlid amb el mateix format:
 {{
-  "summary": "Correcció dels errors de PyTest",
+  "summary": "Correcció quirúrgica dels errors de PyTest",
   "files": [
     {{
       "path": "src/path/al/fitxer.py",

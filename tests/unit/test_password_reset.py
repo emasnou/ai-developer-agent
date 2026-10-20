@@ -150,7 +150,7 @@ def test_unit_2_token_validation_fails_when_expired_or_tampered(token_manager):
         token_manager.verify_token(token_data.token, now=expired_check_time)
 
     payload_b64, sig_b64 = token_data.token.split(".")
-    tampered_sig = sig_b64[:-2] + ("ab" if sig_b64[-2:] != "ab" else "cd")
+    tampered_sig = ("b" if sig_b64[0] != "b" else "c") + sig_b64[1:]
     tampered_token = f"{payload_b64}.{tampered_sig}"
 
     is_valid_tampered, email_tamp, err_tampered = token_manager.validate_token(tampered_token, now=base_time)
