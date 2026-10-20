@@ -17,20 +17,26 @@ class LLMService:
 
     @retry(
         retry=retry_if_exception_type((ServerError, APIError)),
-        stop=stop_after_attempt(5),
+        stop=stop_after_attempt(6),
         wait=wait_exponential(multiplier=2, min=2, max=20),
         before_sleep=lambda retry_state: print(
             f"⚠️ Pic d'alta demanda a l'API de Gemini (503). Reintentant en {retry_state.next_action.sleep:.1f} segons..."
         )
     )
-    def _call_gemini_with_retry(self, prompt: str, model_name: str) -> str:
-        """Crida interna a l'API de Gemini amb reintents automàtics (tenacity)."""
+    def _call_gemini_with_retry(self, prompt: str, model_name: str, force_json: bool = True) -> str:
+        """Crida interna a l'API de Gemini amb reintents automàtics i opció de JSON forçat."""
+        
+        # Configurem el paràmetre response_mime_type si volem forçar JSON
+        config_args = {
+            "temperature": 0.2
+        }
+        if force_json:
+            config_args["response_mime_type"] = "application/json"
+
         response = self.client.models.generate_content(
             model=model_name,
             contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.2, # Baixa temperatura per afavorir estructures precises
-            )
+            config=types.GenerateContentConfig(**config_args)
         )
         return response.text
 
@@ -40,11 +46,11 @@ class LLMService:
         
         try:
             print(f"🤖 [LLMService] Enviant petició al model '{self.primary_model}'...")
-            return self._call_gemini_with_retry(prompt_complet, self.primary_model)
+            return self._call_gemini_with_retry(prompt_complet, self.primary_model, force_json=True)
         except Exception as e:
             print(f"⚠️ El model principal '{self.primary_model}' no ha pogut respondre. Utilitzant el model de reserva '{self.fallback_model}'...")
             try:
-                return self._call_gemini_with_retry(prompt_complet, self.fallback_model)
+                return self._call_gemini_with_retry(prompt_complet, self.fallback_model, force_json=True)
             except Exception as final_error:
                 print(f"❌ Error persistent en la connexió amb Gemini: {final_error}")
                 raise final_error

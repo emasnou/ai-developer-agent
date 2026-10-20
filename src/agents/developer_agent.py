@@ -169,7 +169,8 @@ class DeveloperAgent:
         )
         
         raw_response = self.llm.generate_task_spec(prompt, system_prompt)
-        
+        print ("DEBUG:" + raw_response)
+
         try:
             data = self._parse_json_response(raw_response)
         except Exception as e:
