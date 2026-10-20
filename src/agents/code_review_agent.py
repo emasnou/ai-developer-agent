@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from src.services.llm_service import LLMService
 from src.services.github_service import GitHubService
+from src.schemas.agent_schemas import CodeReviewResponse, ImprovementsResponse
 from src.prompts.review_prompts import CODE_REVIEW_SYSTEM_PROMPT, EXTRACT_IMPROVEMENTS_PROMPT
 
 class CodeReviewAgent:
@@ -19,42 +20,57 @@ class CodeReviewAgent:
 
     def _parse_json_response(self, text: str) -> dict:
         """Extreu i parseja un objecte JSON de la resposta del LLM de manera resilient."""
-        # Intenta utilitzar la llibreria json_repair si està instal·lada
+        if not text or not text.strip():
+            return {}
+
+        # 1. Intent natiu directe
         try:
-            parsed = repair_json(text, return_objects=True)
+            parsed = json.loads(text.strip(), strict=False)
             if isinstance(parsed, dict):
                 return parsed
-        except ImportError:
+        except Exception:
             pass
 
-        # Fallback manual si json_repair no està instal·lat
-        cleaned = re.sub(r'```json\s*', '', text)
-        cleaned = re.sub(r'```\s*$', '', cleaned)
-        
+        # 2. Netejar blocs de codi Markdown
+        cleaned = re.sub(r'```(?:json|yaml)?\s*', '', text.strip(), flags=re.MULTILINE)
+        cleaned = re.sub(r'```\s*$', '', cleaned, flags=re.MULTILINE).strip()
+
+        # 3. Intent natiu sobre text netejat
+        try:
+            parsed = json.loads(cleaned, strict=False)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        # 4. Intenta utilitzar la llibreria json_repair
+        try:
+            parsed = repair_json(cleaned, return_objects=True)
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list):
+                for elem in parsed:
+                    if isinstance(elem, dict) and any(k in elem for k in ["approved", "report", "improvements"]):
+                        return elem
+        except Exception:
+            pass
+
+        # 5. Fallback amb cerca del segment { ... }
         match = re.search(r'\{.*\}', cleaned, re.DOTALL)
         json_str = match.group(0) if match else cleaned.strip()
 
         try:
             return json.loads(json_str, strict=False)
         except json.JSONDecodeError:
-            # Reemplacem cometes no escapades o caràcters de control dins de valors multilínia
-            sanitized = re.sub(
-                r'[\x00-\x1F\x7F]',
-                lambda m: f"\\u{ord(m.group(0)):04x}" if m.group(0) not in ('\n', '\r', '\t') else m.group(0),
-                json_str
-            )
             try:
+                sanitized = re.sub(r'\\(?![\\"/bfnrtu]|u[0-9a-fA-F]{4})', r'\\\\', json_str)
                 return json.loads(sanitized, strict=False)
-            except json.JSONDecodeError:
-                # Reemplaça cometes problemàtiques que no estiguin precedides per \
-                fixed_str = re.sub(r'(?<!\\)"', r'\"', json_str)
-                # Restaura cometes de les claus principals del JSON
-                fixed_str = re.sub(r'\\"(summary|files|path|action|content)\\"', r'"\1"', fixed_str)
-                return json.loads(fixed_str, strict=False)
+            except Exception:
+                return {}
 
     def review_pull_request(self, pr_number: int) -> dict:
         '''Executa l auditoria de seguretat, nomenclatura i rendiment sobre la PR.'''
-        self.logger.info(f'Inici de revisio de codi per a la Pull Request #{pr_number}.')
+   #     self.logger.info(f'Inici de revisio de codi per a la Pull Request #{pr_number}.')
         print(f'\n🔍 [CodeReviewAgent] Analitzant els canvis de la Pull Request #{pr_number}...')
 
         diff_content = self.github.get_pull_request_files(pr_number)
@@ -64,7 +80,11 @@ class CodeReviewAgent:
         )
 
         print('🤖 [CodeReviewAgent] Executant auditoria amb Gemini...')
-        raw_response = self.llm.generate_task_spec(prompt, CODE_REVIEW_SYSTEM_PROMPT)
+        raw_response = self.llm.generate_task_spec(
+            prompt,
+            CODE_REVIEW_SYSTEM_PROMPT,
+            response_schema=CodeReviewResponse
+        )
 
         # Extreiem el Markdown de la resposta JSON o fem el parsejat resilient
         report_markdown = raw_response
@@ -80,10 +100,13 @@ class CodeReviewAgent:
         print('💬 [CodeReviewAgent] Publicant informe de revisió a GitHub...')
         self.github.post_pr_comment(pr_number, report_markdown)
 
-        is_approved = 'APROVAT' in report_markdown and 'CANVIS_REQUERITS' not in report_markdown
-        self.logger.info(
-            f'Revisió finalitzada per a la PR #{pr_number}. Aprovat: {is_approved}.'
-        )
+        if isinstance(parsed, dict) and "approved" in parsed:
+            is_approved = bool(parsed["approved"])
+        else:
+            is_approved = 'APROVAT' in report_markdown and 'CANVIS_REQUERITS' not in report_markdown
+#        self.logger.info(
+#            f'Revisió finalitzada per a la PR #{pr_number}. Aprovat: {is_approved}.'
+#        )
 
         return {
             'pr_number': pr_number,
@@ -107,7 +130,11 @@ class CodeReviewAgent:
             test_filename=test_filename
         )
 
-        raw_response = self.llm.generate_task_spec(prompt, CODE_REVIEW_SYSTEM_PROMPT)
+        raw_response = self.llm.generate_task_spec(
+            prompt,
+            CODE_REVIEW_SYSTEM_PROMPT,
+            response_schema=ImprovementsResponse
+        )
         
         try:
             data = self._parse_json_response(raw_response)

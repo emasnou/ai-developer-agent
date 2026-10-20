@@ -8,6 +8,7 @@ from pathlib import Path
 from json_repair import repair_json
 from src.services.llm_service import LLMService
 from src.services.github_service import GitHubService
+from src.schemas.agent_schemas import DeveloperPlan
 from src.prompts.developer_prompts import (
     DEVELOPER_SYSTEM_PROMPT,
     DEVELOPER_FIX_PROMPT,
@@ -26,45 +27,120 @@ class DeveloperAgent:
         """Extreu i parseja un objecte JSON/YAML de la resposta del LLM de manera ultra-resilient."""
         import yaml
 
-        # 1. Netejar blocs de codi Markdown (```json o ```yaml)
-        cleaned = re.sub(r'```(json|yaml)?\s*', '', text)
-        cleaned = re.sub(r'```\s*$', '', cleaned)
+        if not text or not text.strip():
+            raise ValueError("Resposta buida del model LLM.")
 
-        # 2. Cercar des del primer '{' fins a l'últim '}'
-        first_brace = cleaned.find('{')
-        last_brace = cleaned.rfind('}')
+        def normalize_result(data: dict) -> dict:
+            """Normalitza el diccionari per assegurar la presència de 'files' amb format coherent."""
+            if not isinstance(data, dict):
+                return data
+            files = data.get("files", [])
+            normalized_files = []
+            for item in files:
+                if isinstance(item, dict) and "path" in item and "content" in item:
+                    normalized_files.append({
+                        "path": str(item["path"]).strip(),
+                        "action": str(item.get("action", "create_or_modify")),
+                        "content": str(item["content"])
+                    })
+            data["files"] = normalized_files
+            return data
 
-        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-            json_candidate = cleaned[first_brace:last_brace + 1]
-        else:
-            json_candidate = cleaned.strip()
-
-        # 3. Primer intent: json_repair (és el més eficaç gestionant \escapes invàlids)
+        # 1. Primer intent: càrrega directa nàtiva (habitual quan s'usa response_schema)
         try:
-            from json_repair import repair_json
-            repaired = repair_json(json_candidate, return_objects=True)
-            if isinstance(repaired, dict) and "files" in repaired:
-                return repaired
+            parsed = json.loads(text.strip(), strict=False)
+            if isinstance(parsed, dict) and "files" in parsed:
+                return normalize_result(parsed)
         except Exception:
             pass
 
-        # 4. Segon intent: Sanititzar barres invertides solitàries no vàlides per a JSON (regex)
-        sanitized_candidate = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', json_candidate)
+        # 2. Netejar blocs de codi Markdown (```json o ```yaml)
+        cleaned = re.sub(r'```(?:json|yaml)?\s*', '', text.strip(), flags=re.MULTILINE)
+        cleaned = re.sub(r'```\s*$', '', cleaned, flags=re.MULTILINE).strip()
+
+        # 3. Resoldre problema de triples cometes en valors de codi ("content": '''...''')
+        def replace_triple_quotes(match):
+            prefix = match.group(1)
+            code = match.group(3)
+            return f"{prefix}{json.dumps(code)}"
+
+        preprocessed = re.sub(
+            r'("(?:content|code)"\s*:\s*)(\'\'\'|""")(.*?)(\2)',
+            replace_triple_quotes,
+            cleaned,
+            flags=re.DOTALL
+        )
+
+        # 4. Cercar des del primer '{' fins a l'últim '}'
+        first_brace = preprocessed.find('{')
+        last_brace = preprocessed.rfind('}')
+
+        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+            json_candidate = preprocessed[first_brace:last_brace + 1]
+        else:
+            json_candidate = preprocessed
+
+        # 5. Intent natiu sobre el candidat pre-processat
         try:
-            return json.loads(sanitized_candidate, strict=False)
+            parsed = json.loads(json_candidate, strict=False)
+            if isinstance(parsed, dict) and "files" in parsed:
+                return normalize_result(parsed)
+        except Exception:
+            pass
+
+        # 6. Intent amb json_repair (gestionant tant diccionaris com llistes)
+        try:
+            repaired = repair_json(json_candidate, return_objects=True)
+            if isinstance(repaired, dict):
+                if "files" in repaired:
+                    return normalize_result(repaired)
+                for alt_key in ["file", "files_to_modify", "changes"]:
+                    if alt_key in repaired:
+                        val = repaired[alt_key]
+                        repaired["files"] = val if isinstance(val, list) else [val]
+                        return normalize_result(repaired)
+            elif isinstance(repaired, list):
+                for elem in repaired:
+                    if isinstance(elem, dict) and "files" in elem:
+                        return normalize_result(elem)
+                if all(isinstance(item, dict) and "path" in item for item in repaired):
+                    return normalize_result({"summary": "Canvis generats", "files": repaired})
+        except Exception:
+            pass
+
+        # 7. Sanititzar barres invertides solitàries i escapes no JSON vàlids (p.ex. \' o \s)
+        sanitized_candidate = re.sub(r'\\(?![\\"/bfnrtu]|u[0-9a-fA-F]{4})', r'\\\\', json_candidate)
+        try:
+            parsed = json.loads(sanitized_candidate, strict=False)
+            if isinstance(parsed, dict) and "files" in parsed:
+                return normalize_result(parsed)
         except json.JSONDecodeError:
             pass
 
-        # 5. Tercer intent: PyYAML (suporta cadenes de Python amb escapes naturals)
+        # 8. PyYAML fallback
         try:
-            parsed_yaml = yaml.safe_load(cleaned)
+            parsed_yaml = yaml.safe_load(json_candidate)
             if isinstance(parsed_yaml, dict) and "files" in parsed_yaml:
-                return parsed_yaml
+                return normalize_result(parsed_yaml)
+            if isinstance(parsed_yaml, list) and all(isinstance(item, dict) and "path" in item for item in parsed_yaml):
+                return normalize_result({"summary": "Canvis generats (YAML)", "files": parsed_yaml})
         except Exception:
             pass
 
-        # Fallback final: intent natiu
-        return json.loads(json_candidate, strict=False)
+        # 9. Fallback final amb json_repair sobre el text netejat complet
+        try:
+            repaired_full = repair_json(cleaned, return_objects=True)
+            if isinstance(repaired_full, dict) and "files" in repaired_full:
+                return normalize_result(repaired_full)
+            if isinstance(repaired_full, list):
+                for elem in repaired_full:
+                    if isinstance(elem, dict) and "files" in elem:
+                        return normalize_result(elem)
+        except Exception:
+            pass
+
+        # Fallback final: intent natiu que generarà l'error estàndard si res no ha funcionat
+        return normalize_result(json.loads(json_candidate, strict=False))
 
     def _prepare_workspace_environment(self, issue_number: int) -> Path:
         """
@@ -171,8 +247,12 @@ class DeveloperAgent:
             existing_files_content=existing_files_content
         )
         
-        raw_response = self.llm.generate_task_spec(prompt, system_prompt)
-        print ("DEBUG:" + raw_response)
+        raw_response = self.llm.generate_task_spec(
+            prompt,
+            system_prompt,
+            response_schema=DeveloperPlan
+        )
+        #print ("DEBUG:" + raw_response)
 
         try:
             data = self._parse_json_response(raw_response)
@@ -269,7 +349,11 @@ class DeveloperAgent:
                     )
                     
                     try:
-                        raw_response = self.llm.generate_task_spec(fix_prompt, system_prompt)
+                        raw_response = self.llm.generate_task_spec(
+                            fix_prompt,
+                            system_prompt,
+                            response_schema=DeveloperPlan
+                        )
                         data = self._parse_json_response(raw_response)
                         files_data = data.get("files", files_data)
                         self._write_files_to_workspace(files_data, workspace_dir)
@@ -311,7 +395,11 @@ class DeveloperAgent:
             existing_files_content=existing_files_content
         )
 
-        raw_response = self.llm.generate_task_spec(remediation_prompt, system_prompt)
+        raw_response = self.llm.generate_task_spec(
+            remediation_prompt,
+            system_prompt,
+            response_schema=DeveloperPlan
+        )
         
         try:
             data = self._parse_json_response(raw_response)

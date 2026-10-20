@@ -15,7 +15,11 @@ class AnalystAgent:
         3. Publica la Issue al repositori de GitHub amb l'etiqueta 'enhancement'.
         """
         print("🤖 [AnalystAgent] Analitzant requeriments i generant matriu de QA amb Gemini...")
-        markdown_body = self.llm.generate_task_spec(requirement, ANALYST_SYSTEM_PROMPT)
+        markdown_body = self.llm.generate_task_spec(
+            requirement,
+            ANALYST_SYSTEM_PROMPT,
+            force_json=False
+        )
         
         print("🤖 [AnalystAgent] Creant la Issue a GitHub...")
         issue_result = self.github.create_issue(

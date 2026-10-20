@@ -1,4 +1,5 @@
 import time
+from typing import Any, Optional
 from google import genai
 from google.genai import types
 from google.genai.errors import ServerError, APIError
@@ -23,14 +24,25 @@ class LLMService:
             f"⚠️ Pic d'alta demanda a l'API de Gemini (503). Reintentant en {retry_state.next_action.sleep:.1f} segons..."
         )
     )
-    def _call_gemini_with_retry(self, prompt: str, model_name: str, force_json: bool = True) -> str:
-        """Crida interna a l'API de Gemini amb reintents automàtics i opció de JSON forçat."""
-        
-        # Configurem el paràmetre response_mime_type si volem forçar JSON
+    def _call_gemini_with_retry(
+        self,
+        prompt: str,
+        model_name: str,
+        system_instruction: Optional[str] = None,
+        force_json: bool = True,
+        response_schema: Optional[Any] = None
+    ) -> str:
+        """Crida interna a l'API de Gemini amb reintents automàtics, esquema de dades o JSON forçat."""
         config_args = {
             "temperature": 0.2
         }
-        if force_json:
+        if system_instruction:
+            config_args["system_instruction"] = system_instruction
+
+        if response_schema:
+            config_args["response_schema"] = response_schema
+            config_args["response_mime_type"] = "application/json"
+        elif force_json:
             config_args["response_mime_type"] = "application/json"
 
         response = self.client.models.generate_content(
@@ -40,17 +52,33 @@ class LLMService:
         )
         return response.text
 
-    def generate_task_spec(self, user_requirement: str, system_prompt: str) -> str:
+    def generate_task_spec(
+        self,
+        user_requirement: str,
+        system_prompt: str,
+        force_json: bool = True,
+        response_schema: Optional[Any] = None
+    ) -> str:
         """Envia el requeriment a Gemini gestionant reintents i model de reserva."""
-        prompt_complet = f"{system_prompt}\n\nRequeriment de l'aplicació:\n{user_requirement}"
-        
         try:
             print(f"🤖 [LLMService] Enviant petició al model '{self.primary_model}'...")
-            return self._call_gemini_with_retry(prompt_complet, self.primary_model, force_json=True)
+            return self._call_gemini_with_retry(
+                prompt=user_requirement,
+                model_name=self.primary_model,
+                system_instruction=system_prompt,
+                force_json=force_json,
+                response_schema=response_schema
+            )
         except Exception as e:
-            print(f"⚠️ El model principal '{self.primary_model}' no ha pogut respondre. Utilitzant el model de reserva '{self.fallback_model}'...")
+            print(f"⚠️ El model principal '{self.primary_model}' no ha pogut respondre ({e}). Utilitzant el model de reserva '{self.fallback_model}'...")
             try:
-                return self._call_gemini_with_retry(prompt_complet, self.fallback_model, force_json=True)
+                return self._call_gemini_with_retry(
+                    prompt=user_requirement,
+                    model_name=self.fallback_model,
+                    system_instruction=system_prompt,
+                    force_json=force_json,
+                    response_schema=response_schema
+                )
             except Exception as final_error:
                 print(f"❌ Error persistent en la connexió amb Gemini: {final_error}")
                 raise final_error
