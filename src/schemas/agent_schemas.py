@@ -1,5 +1,8 @@
-from pydantic import BaseModel, Field
+"""Esquemes de dades Pydantic per a les sortides estructurades (Structured Outputs) dels agents."""
+
 from typing import List, Literal
+
+from pydantic import BaseModel, Field
 
 class FileItem(BaseModel):
     """Representa un fitxer de codi que s'ha de crear o modificar."""

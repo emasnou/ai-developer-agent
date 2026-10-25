@@ -1,3 +1,5 @@
+"""Plantilles de prompts per a l'auditoria de codi i l'extracció de millores (`CodeReviewAgent`)."""
+
 CODE_REVIEW_SYSTEM_PROMPT = """Ets un Enginyer Principal de Programari i Auditor de Seguretat Senior.
 La teva tasca és fer una revisió de codi (Code Review) exhaustiva d'una Pull Request.
 

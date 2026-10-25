@@ -85,3 +85,26 @@ def test_code_review_agent_parse_json():
     assert result["approved"] is True
     assert "Aprovat" in result["report"]
 
+
+def test_base_agent_lazy_services_and_dependency_injection():
+    """Verifica que instanciar un agent no crea connexions externes fins que s'accedeix als serveis."""
+    mock_llm = object()
+    mock_gh = object()
+    agent = DeveloperAgent(llm_service=mock_llm, github_service=mock_gh)
+    assert agent.llm is mock_llm
+    assert agent.github is mock_gh
+
+
+def test_developer_agent_workspace_env_strips_secrets(tmp_path, monkeypatch):
+    """Verifica que _build_workspace_env filtra les claus d'API sensibles de l'entorn de PyTest."""
+    monkeypatch.setenv("GITHUB_TOKEN", "secret_gh_token")
+    monkeypatch.setenv("GEMINI_API_KEY", "secret_gemini_key")
+    monkeypatch.setenv("SAFE_VAR", "safe_value")
+
+    env = DeveloperAgent._build_workspace_env(tmp_path)
+    assert "GITHUB_TOKEN" not in env
+    assert "GEMINI_API_KEY" not in env
+    assert env.get("SAFE_VAR") == "safe_value"
+    assert str((tmp_path / "src").resolve()) in env.get("PYTHONPATH", "")
+
+

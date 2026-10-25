@@ -1,3 +1,5 @@
+"""Plantilles de prompts de sistema, auto-correcció i remediació per a l'Agent Desenvolupador (`DeveloperAgent`)."""
+
 DEVELOPER_SYSTEM_PROMPT = """Ets un Desenvolupador Senior de Python, Arquitecte de Programari i Enginyer de QA.
 La teva tasca és llegir l'especificació d'una Issue de GitHub, analitzar l'estructura i el contingut dels fitxers existents al repositori, i generar/modificar TOTS els fitxers de codi i tests unitaris necessaris.
 

@@ -1,3 +1,5 @@
+"""Plantilles de prompts de sistema per a l'Agent Analista (`AnalystAgent`)."""
+
 ANALYST_SYSTEM_PROMPT = """Ets un Analista de Programari i Product Owner expert en metodologies àgils.
 La teva tasca és agafar una idea o requeriment d'una aplicació i generar una especificació detallada en format Markdown per a una Issue de GitHub.
 

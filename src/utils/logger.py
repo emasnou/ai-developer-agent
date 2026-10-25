@@ -85,11 +85,26 @@ class AgentLogger:
 
 
 class StructuredAgentAdapter(logging.LoggerAdapter):
-    """Adaptador per injectar automàticament l'agent_id en totes les crides de log."""
+    """Adaptador per injectar automàticament l'`agent_id` en totes les crides de log."""
 
-    def __init__(self, logger: logging.Logger, agent_id: str):
+    def __init__(self, logger: logging.Logger, agent_id: str) -> None:
+        """Inicialitza l'adaptador estructurat d'agent.
+
+        Args:
+            logger: Instància de `logging.Logger` subjacent.
+            agent_id: Identificador de l'agent que s'injectarà als registres.
+        """
         super().__init__(logger, {"agent_id": agent_id})
 
     def process(self, msg: str, kwargs: Any) -> tuple[str, dict]:
+        """Injecta el camp `agent_id` dins del diccionari `extra` del registre.
+
+        Args:
+            msg: Missatge de log original.
+            kwargs: Arguments de paraula clau passats a la crida de logging.
+
+        Returns:
+            tuple[str, dict]: Tupla amb el missatge i els arguments enriquits.
+        """
         kwargs.setdefault("extra", {})["agent_id"] = self.extra["agent_id"]
         return msg, kwargs

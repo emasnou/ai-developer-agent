@@ -1,11 +1,91 @@
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-developer-agent"
+version = "0.1.0"
+description = "Agent autònom basat en IA per automatitzar el cicle complet de desenvolupament de programari amb GitHub i Google Gemini."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PyGithub>=2.1.1",
+  "python-dotenv>=1.0.0",
+  "pydantic>=2.0.0",
+  "google-genai>=0.1.0",
+  "tenacity>=8.2.0",
+  "pyyaml>=6.0.3",
+  "json-repair>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4.0",
+  "pytest-cov>=4.1.0",
+  "pytest-mock>=3.12.0",
+  "ruff>=0.4.0",
+  "mypy>=1.10.0",
+  "bandit>=1.7.8",
+  "types-PyYAML>=6.0.0",
+]
+
+[project.scripts]
+ai-agent = "src.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
 
 [tool.pytest.ini_options]
 pythonpath = [
-  "src",".workspace/issue*",".","./src"
+  "src",
+  ".workspace/issue*",
+  ".",
+  "./src",
 ]
 testpaths = [
-  "tests"
+  "tests",
 ]
+norecursedirs = [
+  ".workspace",
+  ".git",
+  ".venv",
+  "venv",
+  "__pycache__",
+]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+exclude = [
+  ".workspace",
+  ".venv",
+  "venv",
+  "__pycache__",
+]
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors (PEP8)
+  "W",   # pycodestyle warnings (PEP8)
+  "F",   # pyflakes
+  "I",   # isort (ordenació d'imports)
+  "UP",  # pyupgrade
+  "B",   # flake8-bugbear
+  "S",   # flake8-bandit (seguretat OWASP)
+]
+ignore = [
+  "E501", # longitud de línia gestionada pel formatador o prompts llargs
+  "S101", # permetre l'ús d'assert als tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = ["^\\.workspace/"]

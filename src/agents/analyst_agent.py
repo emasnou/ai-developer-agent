@@ -1,21 +1,49 @@
-from src.services.llm_service import LLMService
-from src.services.github_service import GitHubService
+"""Agent Analista encarregat de transformar requeriments funcionals en Issues de GitHub."""
+
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from src.agents.base_agent import BaseAgent
 from src.prompts.analyst_prompts import ANALYST_SYSTEM_PROMPT
-from src.utils.logger import AgentLogger, StructuredAgentAdapter
+from src.services.github_service import GitHubService
+from src.services.llm_service import LLMService
 
-class AnalystAgent:
-    def __init__(self):
-        """Inicialitza els serveis de LLM i GitHub i el sistema de logging."""
-        self.llm = LLMService()
-        self.github = GitHubService()
-        base_logger = AgentLogger.get_logger("AnalystAgent")
-        self.logger = StructuredAgentAdapter(base_logger, "AnalystAgent")
 
-    def process_requirement_and_create_issue(self, requirement: str, issue_title: str) -> dict:
+class AnalystAgent(BaseAgent):
+    """Agent especialitzat en l'anàlisi funcional, BDD i generació de matrius de QA."""
+
+    def __init__(
+        self,
+        llm_service: Optional[LLMService] = None,
+        github_service: Optional[GitHubService] = None,
+    ) -> None:
+        """Inicialitza l'Agent Analista amb els serveis de LLM, GitHub i logging.
+
+        Args:
+            llm_service: Instància opcional de LLMService per a injecció de dependències.
+            github_service: Instància opcional de GitHubService per a injecció de dependències.
         """
-        1. Rep el requeriment de l'usuari.
-        2. Genera la tasca amb detalls de QA mitjançant el LLM.
-        3. Publica la Issue al repositori de GitHub amb l'etiqueta 'enhancement'.
+        super().__init__(
+            agent_name="AnalystAgent",
+            llm_service=llm_service,
+            github_service=github_service,
+        )
+
+    def process_requirement_and_create_issue(
+        self, requirement: str, issue_title: str
+    ) -> dict[str, Any]:
+        """Analitza el requeriment de l'usuari i publica una Issue estructurada a GitHub.
+
+        Args:
+            requirement: Descripció en llenguatge natural de la funcionalitat requerida.
+            issue_title: Títol resumit per a la Issue de GitHub.
+
+        Returns:
+            dict[str, Any]: Diccionari amb el número, títol i URL de la Issue creada.
+
+        Raises:
+            Exception: Si es produeix un error durant la generació del LLM o la crida a GitHub.
         """
         self.logger.info(f"Iniciant anàlisi de requeriment per a la tasca: '{issue_title}'")
         print("🤖 [AnalystAgent] Analitzant requeriments i generant matriu de QA amb Gemini...")
@@ -23,21 +51,22 @@ class AnalystAgent:
             markdown_body = self.llm.generate_task_spec(
                 requirement,
                 ANALYST_SYSTEM_PROMPT,
-                force_json=False
+                force_json=False,
             )
         except Exception as e:
             self.logger.error(f"Error en generar l'especificació amb el LLM: {e}")
-            raise e
-        
+            raise
+
         print("🤖 [AnalystAgent] Creant la Issue a GitHub...")
         try:
             issue_result = self.github.create_issue(
                 title=issue_title,
                 body=markdown_body,
-                labels=["enhancement", "agent-analyst"]
+                labels=["enhancement", "agent-analyst"],
             )
             self.logger.info(f"Issue creada amb èxit a GitHub: {issue_result.get('url')}")
             return issue_result
         except Exception as e:
             self.logger.error(f"Error en publicar la Issue a GitHub: {e}")
-            raise e
+            raise
+

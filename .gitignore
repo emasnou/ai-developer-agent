@@ -28,9 +28,27 @@ __pycache__/
 # ==========================================
 .pytest_cache/
 .coverage
+coverage.xml
 htmlcov/
 .nox/
 .hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# ==========================================
+# Workspaces Aïllats d'Agents i Logs d'Auditoria
+# ==========================================
+.workspace/
+logs/
+*.log
+*.log.*
+
+# ==========================================
+# Distribució i Empaquetat (Python Packaging)
+# ==========================================
+build/
+dist/
+*.egg-info/
 
 # ==========================================
 # Fitxers de la IDE / Editor de Codi
