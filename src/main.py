@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from typing import Any, Optional
-
-# Afegir el directori arrel al sys.path per compatibilitat d'execució directa
-sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from src.agents.analyst_agent import AnalystAgent
 from src.agents.code_review_agent import CodeReviewAgent

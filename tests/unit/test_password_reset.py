@@ -2,9 +2,10 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+
 import pytest
 
-from password_reset import (
+from src.password_reset import (
     GENERIC_SUCCESS_MESSAGE,
     PASSWORD_MAX_LENGTH,
     PASSWORD_MIN_LENGTH,

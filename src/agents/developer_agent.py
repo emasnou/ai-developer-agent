@@ -184,16 +184,20 @@ class DeveloperAgent(BaseAgent):
     def _build_workspace_env(workspace_dir: Path) -> dict[str, str]:
         """Construeix un entorn d'execució aïllat per a PyTest filtrant secrets sensibles.
 
+         Fixa el `PYTHONPATH` exclusivament als directoris del workspace (`workspace_dir`
+        i `workspace_dir/src`) sense heretar rutes de l'entorn amfitrió per evitar
+        contaminació creuada entre el repositori arrel i el workspace.
+
         Args:
             workspace_dir: Ruta del workspace local per configurar el PYTHONPATH.
 
         Returns:
-            dict[str, str]: Variables d'entorn segures per al subprocés de test.
+            dict[str, str]: Variables d'entorn segures i aïllades per al subprocés de test.
         """
         env = {k: v for k, v in os.environ.items() if k not in _SENSITIVE_ENV_VARS}
+        root_workspace = str(workspace_dir.resolve())
         src_workspace = str((workspace_dir / "src").resolve())
-        current_pythonpath = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = f"{src_workspace}:{current_pythonpath}" if current_pythonpath else src_workspace
+        env["PYTHONPATH"] = os.pathsep.join([root_workspace, src_workspace])
         return env
 
     def _run_pytest_command(

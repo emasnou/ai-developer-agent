@@ -38,10 +38,7 @@ include = ["src*"]
 
 [tool.pytest.ini_options]
 pythonpath = [
-  "src",
-  ".workspace/issue*",
   ".",
-  "./src",
 ]
 testpaths = [
   "tests",

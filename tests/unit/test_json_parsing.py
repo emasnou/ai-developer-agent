@@ -96,15 +96,18 @@ def test_base_agent_lazy_services_and_dependency_injection():
 
 
 def test_developer_agent_workspace_env_strips_secrets(tmp_path, monkeypatch):
-    """Verifica que _build_workspace_env filtra les claus d'API sensibles de l'entorn de PyTest."""
+    """Verifica que _build_workspace_env filtra les claus d'API sensibles i aïlla el PYTHONPATH."""
     monkeypatch.setenv("GITHUB_TOKEN", "secret_gh_token")
     monkeypatch.setenv("GEMINI_API_KEY", "secret_gemini_key")
+    monkeypatch.setenv("PYTHONPATH", "/host/contaminated/path")
     monkeypatch.setenv("SAFE_VAR", "safe_value")
 
     env = DeveloperAgent._build_workspace_env(tmp_path)
     assert "GITHUB_TOKEN" not in env
     assert "GEMINI_API_KEY" not in env
     assert env.get("SAFE_VAR") == "safe_value"
+    assert "/host/contaminated/path" not in env.get("PYTHONPATH", "")
+    assert str(tmp_path.resolve()) in env.get("PYTHONPATH", "")
     assert str((tmp_path / "src").resolve()) in env.get("PYTHONPATH", "")
 
 
