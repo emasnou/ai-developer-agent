@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# bin/ai-adr — Script de gestió d'Architecture Decision Records (docs/adr/)
+# Permet llistar ADRs, crear nous registres numerats a partir de la plantilla
+# oficial ADR-0000 i sincronitzar automàticament l'índex a docs/adr/README.md.
+# ==============================================================================
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+
+ADR_DIR="${PROJECT_ROOT}/docs/adr"
+NEW_TITLE=""
+ADR_STATUS="Acceptat"
+ADR_AUTHOR="\`DeveloperAgent\` / Equip d'Arquitectura"
+ADR_ISSUE="N/A"
+DO_LIST=false
+DO_SYNC=false
+
+usage() {
+    cat <<EOF
+🏛️  Ús: $(basename "$0") [OPCIONS]
+
+Gestiona els Architecture Decision Records (ADRs) del projecte a docs/adr/.
+Si s'executa sense paràmetres, mostra el llistat actual d'ADRs registrats.
+
+Opcions:
+  -l, --list                      Llista tots els ADRs registrats a docs/adr/ (per defecte).
+  -n, --new "<títol>"             Crea un nou ADR amb numeració seqüencial automàtica (NNNN-kebab-case.md)
+                                  i actualitza automàticament la taula de docs/adr/README.md.
+  -s, --status <estat>            Estat inicial del nou ADR: Proposat | Acceptat | Obsolet (per defecte: Acceptat).
+  -a, --author "<autor>"          Agent d'IA o autor responsable (per defecte: DeveloperAgent).
+  -i, --issue "<#ref>"            Issue o Pull Request vinculada (ex: "#18").
+  --sync                          Sincronitza la taula d'índex de docs/adr/README.md.
+  -h, --help                      Mostra aquesta ajuda i surt.
+
+Exemples:
+  $(basename "$0") --list
+  $(basename "$0") --new " Adopció de Cache amb Redis" --status Proposat --issue "#24"
+  $(basename "$0") --sync
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+    DO_LIST=true
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -l|--list)
+            DO_LIST=true
+            shift
+            ;;
+        -n|--new)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar el títol de l'ADR per a $1."; exit 1; }
+            NEW_TITLE="$2"
+            shift 2
+            ;;
+        -s|--status)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar l'estat per a $1."; exit 1; }
+            ADR_STATUS="$2"
+            shift 2
+            ;;
+        -a|--author)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar l'autor per a $1."; exit 1; }
+            ADR_AUTHOR="$2"
+            shift 2
+            ;;
+        -i|--issue)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar la referència d'Issue/PR per a $1."; exit 1; }
+            ADR_ISSUE="$2"
+            shift 2
+            ;;
+        --sync)
+            DO_SYNC=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            log_error "Paràmetre desconegut: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+cd "${PROJECT_ROOT}"
+
+if [[ -n "${NEW_TITLE}" ]]; then
+    "${PYTHON_BIN}" -c '
+import re, sys, unicodedata
+from datetime import date
+from pathlib import Path
+from src.utils.doc_updater import sync_adr_index
+
+adr_dir = Path(sys.argv[1])
+title = sys.argv[2].strip()
+status = sys.argv[3].strip()
+author = sys.argv[4].strip()
+issue_ref = sys.argv[5].strip()
+
+adr_dir.mkdir(parents=True, exist_ok=True)
+existing_nums = []
+for f in adr_dir.glob("*.md"):
+    m = re.match(r"^(\d{4})-", f.name)
+    if m:
+        existing_nums.append(int(m.group(1)))
+
+next_num = max([n for n in existing_nums if n > 0], default=0) + 1
+adr_id_num = f"{next_num:04d}"
+adr_id = f"ADR-{adr_id_num}"
+
+# Generem slug kebab-case sense accents
+normalized = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii").lower()
+slug = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-") or "decisio-arquitectura"
+target_file = adr_dir / f"{adr_id_num}-{slug}.md"
+today_str = date.today().isoformat()
+
+content = f"""# {adr_id}: {title}
+
+## 📋 Metadades i Traçabilitat de l\x27Agent d\x27IA
+
+| Camp | Valor |
+| :--- | :--- |
+| **ID d\x27ADR** | `{adr_id}` |
+| **Estat** | `{status}` |
+| **Data** | `{today_str}` |
+| **Agent Autor** | {author} |
+| **Model LLM Emprat** | `gemini-2.5-flash` |
+| **Repositori Actiu** | `emasnou/ai-developer-agent` |
+| **Issue / PR Vinculada** | `{issue_ref}` |
+| **Impacte de Seguretat (OWASP)** | `Baix / Mitjà — Especificar categoria` |
+
+---
+
+## 1. Context i Problema Tècnic
+
+- **Requeriment d\x27origen:** [Descriure el requeriment o problema que motiva aquesta decisió]
+- **Estat actual del repositori:** [Mòduls afectats i limitacions actuals]
+
+---
+
+## 2. Factors de Decisió (Architectural Drivers)
+
+* Compliment del Principi de Responsabilitat Única (SRP) i mantenibilitat.
+* Seguretat per disseny alineada amb OWASP Top 10.
+* Testabilitat determinista amb PyTest i `tmp_path`.
+
+---
+
+## 3. Decisió d\x27Arquitectura Presa per l\x27Agent IA
+
+### 3.1. Resum de la Solució Escollida
+[Explicació detallada de la decisió presa i el seu perquè]
+
+### 3.2. Components i Fitxers Afectats
+* `src/...`
+
+---
+
+## 4. Alternatives Considerades i Descartades
+
+| Alternativa Avaluada | Avantatges (Pros) | Inconvenients (Contres) | Motiu de Decisió |
+| :--- | :--- | :--- | :--- |
+| **Opció A (Escollida)** | Alta cohesió i baix acoblament | Requereix adaptació inicial | **Seleccionada** |
+| **Opció B (Descartada)** | Implementació immediata | Incrementa el deute tècnic | **Descartada** |
+
+---
+
+## 5. Conseqüències, Trade-offs i Anàlisi de Seguretat (OWASP Top 10)
+
+### 5.1. Conseqüències Positives
+* ✅ Millora de la modularitat i traçabilitat arquitectònica.
+
+### 5.2. Trade-offs i Deute Tècnic Assumit
+* ⚠️ Cap deute tècnic crític identificat.
+
+---
+
+## 6. Verificació Automatitzada i Evidència de QA (PyTest)
+
+* Validat mitjançant la suite de tests unitaris a `tests/unit/`.
+"""
+
+target_file.write_text(content, encoding="utf-8")
+sync_adr_index(adr_dir)
+print(f"✅ Nou ADR creat a: {target_file.relative_to(adr_dir.parents[1])}")
+print("🔄 Índex actualitzat automàticament a: docs/adr/README.md")
+' "${ADR_DIR}" "${NEW_TITLE}" "${ADR_STATUS}" "${ADR_AUTHOR}" "${ADR_ISSUE}"
+fi
+
+if [[ "${DO_SYNC}" == true ]]; then
+    "${PYTHON_BIN}" -c '
+import sys
+from pathlib import Path
+from src.utils.doc_updater import sync_adr_index
+
+changed = sync_adr_index(Path(sys.argv[1]))
+if changed:
+    print("✅ Taula d\x27ADRs sincronitzada a docs/adr/README.md.")
+else:
+    print("ℹ️ La taula d\x27ADRs a docs/adr/README.md ja estava al dia.")
+' "${ADR_DIR}"
+fi
+
+if [[ "${DO_LIST}" == true ]]; then
+    "${PYTHON_BIN}" -c '
+import sys
+from pathlib import Path
+from src.utils.doc_updater import extract_adr_metadata
+
+adr_dir = Path(sys.argv[1])
+print("🏛️  Registre de Decisions d\x27Arquitectura (docs/adr/):\n")
+for f in sorted(adr_dir.glob("*.md")):
+    entry = extract_adr_metadata(f)
+    if entry is not None:
+        print(f"  • [ADR-{entry.adr_id}] ({entry.status}, {entry.date}) -> {entry.title} [{entry.filename}]")
+' "${ADR_DIR}"
+fi
+

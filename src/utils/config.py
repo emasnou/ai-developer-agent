@@ -1,7 +1,8 @@
 """Mòdul de configuració i càrrega segura de variables d'entorn.
 
 Desacobla la càrrega de variables de la seva validació estricta en temps d'importació
-per permetre l'execució de tests unitaris sense dependre de fitxers .env ni connexions externes.
+per permetre l'execució de tests unitaris sense dependre de fitxers .env ni connexions externes,
+i dóna suport a la configuració multi-repositori de GitHub.
 """
 
 from __future__ import annotations
@@ -12,13 +13,43 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-# Carrega les variables del fitxer .env si existeix
+# Carreguem .env de forma permissiva (sense fallar si no existeix) per permetre
+# l'execució de tests unitaris en entorns CI/CD aïllats sense fitxers de secrets
 load_dotenv()
 
 GITHUB_TOKEN: Optional[str] = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO: Optional[str] = os.getenv("GITHUB_REPO")
+GITHUB_REPOS_RAW: Optional[str] = os.getenv("GITHUB_REPOS")
 GEMINI_API_KEY: Optional[str] = os.getenv("GEMINI_API_KEY")
 APP_SECRET_KEY: Optional[str] = os.getenv("APP_SECRET_KEY")
+
+
+def parse_repo_list(
+    raw_repos: Optional[str], default_repo: Optional[str] = None
+) -> tuple[str, ...]:
+    """Analitza una cadena de repositoris separats per comes i retorna una tupla sense duplicats.
+
+    Args:
+        raw_repos: Cadena amb noms de repositori separats per comes (ex: 'org/repo1,org/repo2').
+        default_repo: Repositori principal opcional per incloure al principi de la llista.
+
+    Returns:
+        tuple[str, ...]: Tupla ordenada i sense duplicats dels repositoris configurats.
+    """
+    repos: list[str] = []
+    if default_repo and default_repo.strip():
+        repos.append(default_repo.strip())
+
+    if raw_repos:
+        for item in raw_repos.split(","):
+            cleaned = item.strip()
+            if cleaned and cleaned not in repos:
+                repos.append(cleaned)
+
+    return tuple(repos)
+
+
+GITHUB_REPOS: tuple[str, ...] = parse_repo_list(GITHUB_REPOS_RAW, GITHUB_REPO)
 
 
 @dataclass(frozen=True)
@@ -27,13 +58,15 @@ class AppConfig:
 
     Attributes:
         github_token: Token d'autenticació per a l'API de GitHub.
-        github_repo: Repositori de destinació en format 'propietari/nom'.
+        github_repo: Repositori actiu per defecte en format 'propietari/nom'.
+        github_repos: Tupla de repositoris configurats disponibles per seleccionar.
         gemini_api_key: Clau d'accés a l'API de Google Gemini.
         app_secret_key: Clau secreta opcional per a mòduls criptogràfics.
     """
 
     github_token: Optional[str] = None
     github_repo: Optional[str] = None
+    github_repos: tuple[str, ...] = ()
     gemini_api_key: Optional[str] = None
     app_secret_key: Optional[str] = None
 
@@ -44,23 +77,29 @@ class AppConfig:
         Returns:
             AppConfig: Instància amb els valors actuals de les variables d'entorn.
         """
+        default_repo = os.getenv("GITHUB_REPO", GITHUB_REPO)
+        raw_repos = os.getenv("GITHUB_REPOS", GITHUB_REPOS_RAW)
         return cls(
             github_token=os.getenv("GITHUB_TOKEN", GITHUB_TOKEN),
-            github_repo=os.getenv("GITHUB_REPO", GITHUB_REPO),
+            github_repo=default_repo,
+            github_repos=parse_repo_list(raw_repos, default_repo),
             gemini_api_key=os.getenv("GEMINI_API_KEY", GEMINI_API_KEY),
             app_secret_key=os.getenv("APP_SECRET_KEY", APP_SECRET_KEY),
         )
 
-    def validate_github(self) -> None:
+    def validate_github(self, require_repo: bool = True) -> None:
         """Verifica que les credencials de GitHub estiguin definides.
 
+        Args:
+            require_repo: Si és True, exigeix també que `github_repo` estigui definit.
+
         Raises:
-            ValueError: Si falta GITHUB_TOKEN o GITHUB_REPO.
+            ValueError: Si falta GITHUB_TOKEN o (quan s'exigeix) GITHUB_REPO.
         """
         if not self.github_token:
             raise ValueError("Falta la variable GITHUB_TOKEN al fitxer .env")
-        if not self.github_repo:
-            raise ValueError("Falta la variable GITHUB_REPO al fitxer .env")
+        if require_repo and not self.github_repo:
+            raise ValueError("Falta seleccionar un repositori o definir GITHUB_REPO al fitxer .env")
 
     def validate_gemini(self) -> None:
         """Verifica que la clau de l'API de Gemini estigui definida.
@@ -70,5 +109,3 @@ class AppConfig:
         """
         if not self.gemini_api_key:
             raise ValueError("Falta la variable GEMINI_API_KEY al fitxer .env")
-
-

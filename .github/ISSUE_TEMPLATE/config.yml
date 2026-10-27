@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "📜 Política de Codi, Documentació i Seguretat (OWASP Top 10)"
+    url: "https://github.com/emili/ai-developer-agent/blob/main/docs/code_policy.md"
+    about: "Consulta les normes d'estil PEP 8/484/257, seguretat i testing abans d'obrir una Issue."
+  - name: "🏛️ Registre de Decisions d'Arquitectura (ADR)"
+    url: "https://github.com/emili/ai-developer-agent/blob/main/docs/adr/README.md"
+    about: "Consulta o proposa una decisió arquitectònica seguint la plantilla oficial d'ADR."
+

@@ -1,0 +1,187 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# bin/ai-quality — Suite unificada de Qualitat, Seguretat, Tipat i Tests (CI Gate)
+# Executa Ruff (PEP 8 + pydocstyle + Bandit), Mypy (PEP 484), l'auditor AST de
+# docstrings (src.utils.doc_updater) i la bateria de proves unitàries amb PyTest.
+# ==============================================================================
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+
+RUN_LINT=false
+RUN_FIX=false
+RUN_TYPES=false
+RUN_DOCS=false
+RUN_SECURITY=false
+RUN_TESTS=false
+WITH_COV=false
+PYTEST_FILTER=""
+
+usage() {
+    cat <<EOF
+🛡️  Ús: $(basename "$0") [OPCIONS]
+
+Executa les portes de qualitat, seguretat (OWASP Top 10), tipat estàtic i tests
+definides a docs/code_policy.md i .github/workflows/ci.yml.
+Si s'executa sense paràmetres, llança tota la suite completa (--all).
+
+Opcions:
+  -a, --all                       Executa totes les verificacions (Lint + Docs + Types + PyTest).
+  -l, --lint                      Executa el linter Ruff (PEP 8 + pydocstyle Google + Bandit).
+  -f, --fix                       Aplica correccions automàtiques de Ruff i sincronitza docs.
+  -d, --docstrings                Valida per AST el 100% de docstrings i tipus a src/ i revisa docs/.
+  -t, --types                     Executa la verificació de tipat estàtic PEP 484 amb Mypy.
+  -s, --security                  Executa l'escaneig de seguretat SAST (Ruff Bandit S + Bandit).
+  -u, --test, --pytest            Executa la bateria de tests unitaris amb PyTest.
+  -c, --cov                       Activa l'informe de cobertura de codi (--cov=src) als tests.
+  -k, --filter "<expressió>"      Filtra els tests de PyTest per nom o expressió (-k).
+  -h, --help                      Mostra aquesta ajuda i surt.
+
+Exemples:
+  $(basename "$0")
+  $(basename "$0") --lint --types
+  $(basename "$0") --fix
+  $(basename "$0") --test --cov
+  $(basename "$0") --test -k "test_doc_updater or test_github_templates"
+  $(basename "$0") --security
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+    RUN_LINT=true
+    RUN_DOCS=true
+    RUN_TYPES=true
+    RUN_TESTS=true
+    WITH_COV=true
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -a|--all)
+            RUN_LINT=true
+            RUN_DOCS=true
+            RUN_TYPES=true
+            RUN_TESTS=true
+            WITH_COV=true
+            shift
+            ;;
+        -l|--lint)
+            RUN_LINT=true
+            shift
+            ;;
+        -f|--fix)
+            RUN_FIX=true
+            shift
+            ;;
+        -d|--docstrings)
+            RUN_DOCS=true
+            shift
+            ;;
+        -t|--types)
+            RUN_TYPES=true
+            shift
+            ;;
+        -s|--security)
+            RUN_SECURITY=true
+            shift
+            ;;
+        -u|--test|--pytest)
+            RUN_TESTS=true
+            shift
+            ;;
+        -c|--cov)
+            RUN_TESTS=true
+            WITH_COV=true
+            shift
+            ;;
+        -k|--filter)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar l'expressió de filtre per a $1."; exit 1; }
+            RUN_TESTS=true
+            PYTEST_FILTER="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            log_error "Paràmetre desconegut: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+cd "${PROJECT_ROOT}"
+RUFF_BIN="$(resolve_tool_bin ruff)"
+MYPY_BIN="$(resolve_tool_bin mypy)"
+BANDIT_BIN="$(resolve_tool_bin bandit)"
+
+if [[ "${RUN_FIX}" == true ]]; then
+    log_info "Aplicant auto-correccions d'estil i imports amb Ruff..."
+    if [[ -n "${RUFF_BIN}" ]]; then
+        "${RUFF_BIN}" check --fix src/ tests/
+    else
+        "${PYTHON_BIN}" -m ruff check --fix src/ tests/
+    fi
+    log_info "Sincronitzant documentació tècnica i índex d'ADRs..."
+    "${PYTHON_BIN}" -m src.utils.doc_updater --root "${PROJECT_ROOT}"
+    log_ok "Correccions i sincronització aplicades."
+fi
+
+if [[ "${RUN_LINT}" == true ]]; then
+    log_info "1/4 Verificant estil PEP 8, docstrings Google (D) i seguretat (S) amb Ruff..."
+    if [[ -n "${RUFF_BIN}" ]]; then
+        "${RUFF_BIN}" check src/ tests/
+    else
+        "${PYTHON_BIN}" -m ruff check src/ tests/
+    fi
+    log_ok "Ruff ha finalitzat sense errors."
+fi
+
+if [[ "${RUN_DOCS}" == true ]]; then
+    log_info "2/4 Validant docstrings i tipus de retorn per AST (Docs-as-Code Gate)..."
+    "${PYTHON_BIN}" -m src.utils.doc_updater --root "${PROJECT_ROOT}" --validate-docstrings
+    "${PYTHON_BIN}" -m src.utils.doc_updater --root "${PROJECT_ROOT}" --check
+    log_ok "Docstrings, tipus de retorn i documentació sincronitzats al 100%."
+fi
+
+if [[ "${RUN_TYPES}" == true ]]; then
+    log_info "3/4 Verificant tipat estàtic PEP 484 amb Mypy..."
+    if [[ -n "${MYPY_BIN}" ]]; then
+        "${MYPY_BIN}" src/
+    else
+        "${PYTHON_BIN}" -m mypy src/
+    fi
+    log_ok "Mypy ha validat tots els tipus correctament."
+fi
+
+if [[ "${RUN_SECURITY}" == true ]]; then
+    log_info "Executant auditoria de seguretat estàtica (OWASP Top 10 / Bandit)..."
+    if [[ -n "${RUFF_BIN}" ]]; then
+        "${RUFF_BIN}" check --select S src/
+    else
+        "${PYTHON_BIN}" -m ruff check --select S src/
+    fi
+    if [[ -n "${BANDIT_BIN}" ]]; then
+        "${BANDIT_BIN}" -r src/ -q
+    fi
+    log_ok "Auditoria de seguretat superada."
+fi
+
+if [[ "${RUN_TESTS}" == true ]]; then
+    log_info "4/4 Executant bateria de tests unitaris amb PyTest..."
+    PYTEST_ARGS=("tests/unit" "-v")
+    if [[ "${WITH_COV}" == true ]]; then
+        if "${PYTHON_BIN}" -c "import pytest_cov" >/dev/null 2>&1; then
+            PYTEST_ARGS+=("--cov=src" "--cov-report=term-missing")
+        else
+            log_warn "El plugin pytest-cov no està instal·lat; s'executa pytest sense cobertura."
+        fi
+    fi
+    if [[ -n "${PYTEST_FILTER}" ]]; then
+        PYTEST_ARGS+=("-k" "${PYTEST_FILTER}")
+    fi
+    "${PYTHON_BIN}" -m pytest "${PYTEST_ARGS[@]}"
+    log_ok "Tots els tests unitaris han passat satisfactòriament!"
+fi
+

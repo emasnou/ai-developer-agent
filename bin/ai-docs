@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# bin/ai-docs — Script de sincronització automàtica i portal de documentació
+# Executa el motor AST src.utils.doc_updater i gestiona el portal MkDocs Material.
+# ==============================================================================
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+
+TARGET_ROOT="${PROJECT_ROOT}"
+DO_SYNC=false
+DO_CHECK=false
+DO_VALIDATE=false
+DO_BUILD=false
+DO_SERVE=false
+PORT="8000"
+
+usage() {
+    cat <<EOF
+📚 Ús: $(basename "$0") [OPCIONS]
+
+Sincronitza automàticament la documentació tècnica (docs/reference/index.md i
+docs/adr/README.md), valida els docstrings PEP 257 / tipus PEP 484 i compila MkDocs.
+Si s'executa sense paràmetres, sincronitza automàticament tota la documentació.
+
+Opcions:
+  --sync                          Regenera docs/reference/index.md i l'índex d'ADRs (opció per defecte).
+  -c, --check                     Verifica si la documentació està sincronitzada sense modificar fitxers.
+  -v, --validate-docstrings       Valida per AST que tot el codi públic de src/ tingui docstring i tipus.
+  -b, --build                     Compila el portal estàtic amb MkDocs Material (mkdocs build --strict).
+  -s, --serve                     Inicia el servidor local de previsualització de MkDocs Material.
+  -p, --port <port>               Port per a l'opció --serve (per defecte: 8000).
+  -r, --root <directori>          Ruta a l'arrel del projecte (per defecte: ${PROJECT_ROOT}).
+  -a, --all                       Executa validació de docstrings + sincronització + build de MkDocs.
+  -h, --help                      Mostra aquesta ajuda i surt.
+
+Exemples:
+  $(basename "$0")
+  $(basename "$0") --validate-docstrings
+  $(basename "$0") --check
+  $(basename "$0") --all
+  $(basename "$0") --serve --port 8080
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+    DO_SYNC=true
+fi
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --sync)
+            DO_SYNC=true
+            shift
+            ;;
+        -c|--check)
+            DO_CHECK=true
+            shift
+            ;;
+        -v|--validate-docstrings)
+            DO_VALIDATE=true
+            shift
+            ;;
+        -b|--build)
+            DO_BUILD=true
+            shift
+            ;;
+        -s|--serve)
+            DO_SERVE=true
+            shift
+            ;;
+        -p|--port)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar el port per a $1."; exit 1; }
+            PORT="$2"
+            shift 2
+            ;;
+        -r|--root)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar el directori per a $1."; exit 1; }
+            TARGET_ROOT="$2"
+            shift 2
+            ;;
+        -a|--all)
+            DO_VALIDATE=true
+            DO_SYNC=true
+            DO_BUILD=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            log_error "Paràmetre desconegut: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+cd "${TARGET_ROOT}"
+
+if [[ "${DO_VALIDATE}" == true ]]; then
+    log_info "Validant docstrings (PEP 257 Google Style) i tipus de retorn (PEP 484) a src/..."
+    "${PYTHON_BIN}" -m src.utils.doc_updater --root "${TARGET_ROOT}" --validate-docstrings
+fi
+
+if [[ "${DO_CHECK}" == true ]]; then
+    log_info "Comprovant sincronització de docs/reference/index.md i docs/adr/README.md..."
+    "${PYTHON_BIN}" -m src.utils.doc_updater --root "${TARGET_ROOT}" --check
+fi
+
+if [[ "${DO_SYNC}" == true ]]; then
+    log_info "Sincronitzant automàticament la referència d'API i l'índex d'ADRs..."
+    "${PYTHON_BIN}" -m src.utils.doc_updater --root "${TARGET_ROOT}"
+fi
+
+MKDOCS_BIN="$(resolve_tool_bin mkdocs)"
+
+if [[ "${DO_BUILD}" == true ]]; then
+    if [[ -n "${MKDOCS_BIN}" ]]; then
+        log_info "Compilant portal MkDocs Material en mode estricte..."
+        "${MKDOCS_BIN}" build --strict
+        log_ok "Portal generat correctament al directori site/."
+    else
+        log_warn "MkDocs no està instal·lat a l'entorn actual. Instal·la'l amb: pip install -e '.[docs]'"
+        exit 1
+    fi
+fi
+
+if [[ "${DO_SERVE}" == true ]]; then
+    if [[ -n "${MKDOCS_BIN}" ]]; then
+        log_info "Iniciant servidor MkDocs Material a http://127.0.0.1:${PORT} ..."
+        exec "${MKDOCS_BIN}" serve -a "127.0.0.1:${PORT}"
+    else
+        log_error "MkDocs no està instal·lat. Executa: pip install -e '.[docs]'"
+        exit 1
+    fi
+fi
+

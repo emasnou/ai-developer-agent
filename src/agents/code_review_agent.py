@@ -9,6 +9,7 @@ from src.prompts.review_prompts import CODE_REVIEW_SYSTEM_PROMPT, EXTRACT_IMPROV
 from src.schemas.agent_schemas import CodeReviewResponse, ImprovementsResponse
 from src.services.github_service import GitHubService
 from src.services.llm_service import LLMService
+from src.utils.github_templates import render_improvement_issue_body
 from src.utils.json_parser import parse_generic_json_response
 
 
@@ -19,17 +20,20 @@ class CodeReviewAgent(BaseAgent):
         self,
         llm_service: Optional[LLMService] = None,
         github_service: Optional[GitHubService] = None,
+        repo_name: Optional[str] = None,
     ) -> None:
         """Inicialitza el CodeReviewAgent amb accés diferit als serveis, política i logger.
 
         Args:
             llm_service: Instància opcional de LLMService per a injecció de dependències.
             github_service: Instància opcional de GitHubService per a injecció de dependències.
+            repo_name: Nom opcional del repositori (`owner/repo`) on auditar les PRs.
         """
         super().__init__(
             agent_name="CodeReviewAgent",
             llm_service=llm_service,
             github_service=github_service,
+            repo_name=repo_name,
         )
 
     def _parse_json_response(self, text: str) -> dict[str, Any]:
@@ -140,10 +144,16 @@ class CodeReviewAgent(BaseAgent):
 
             for item in data.get("improvements", []):
                 print(f"📌 Creant Issue de millora: {item['title']}...")
+                issue_body = render_improvement_issue_body(
+                    description=item["description"],
+                    code_filename=code_filename,
+                    test_filename=test_filename,
+                    pr_number=pr_number,
+                )
                 issue_res = self.github.create_issue(
                     title=item["title"],
-                    body=item["description"],
-                    labels=["enhancement"],
+                    body=issue_body,
+                    labels=["enhancement", "agent-review"],
                 )
                 created_issues.append(issue_res)
                 self.logger.info(f"Issue de millora creada: {item['title']}")

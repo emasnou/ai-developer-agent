@@ -112,7 +112,9 @@ class ResetTokenData:
 class PasswordResetTokenManager:
     """Genera, valida, invalida i purga tokens criptogràfics segurs amb expiració fixa."""
 
-    def __init__(self, secret_key: Optional[str] = None, expiration_minutes: int = 15):
+    def __init__(
+        self, secret_key: Optional[str] = None, expiration_minutes: int = 15
+    ) -> None:
         """Inicialitza el gestor de tokens.
 
         Args:
@@ -319,6 +321,7 @@ class PasswordResetTokenManager:
                 hashlib.sha256,
             ).digest()
             actual_sig = self._b64_decode(signature_b64)
+            # Usem compare_digest en temps constant per mitigar atacs de canal lateral (OWASP A07)
             if not hmac.compare_digest(expected_sig, actual_sig):
                 raise InvalidTokenError("La signatura del token ha estat manipulada o és invàlida.")
 
@@ -441,7 +444,7 @@ class PasswordResetTokenManager:
 class UserRepository:
     """Repositori d'usuaris en memòria amb gestió segura de contrasenyes mitjançant scrypt."""
 
-    def __init__(self, initial_users: Optional[List[str]] = None):
+    def __init__(self, initial_users: Optional[List[str]] = None) -> None:
         """Inicialitza el repositori amb un conjunt d'usuaris opcional.
 
         Args:
@@ -557,13 +560,14 @@ class UserRepository:
             maxmem=0,
             dklen=64,
         )
+        # Comparació en temps constant per evitar fuites temporals sobre el hash derivat
         return hmac.compare_digest(actual_key, expected_key)
 
 
 class EmailService:
     """Servei d'enviament de correus electrònics amb registre segur entre fils."""
 
-    def __init__(self, async_dispatch: bool = False):
+    def __init__(self, async_dispatch: bool = False) -> None:
         """Inicialitza el servei amb un historial d'enviaments buit.
 
         Args:
@@ -608,7 +612,7 @@ class EmailService:
 class RateLimiter:
     """Limitador de taxa thread-safe basat en finestres lliscants i gestió eficient de memòria."""
 
-    def __init__(self, max_requests: int = 5, window_seconds: int = 300):
+    def __init__(self, max_requests: int = 5, window_seconds: int = 300) -> None:
         """Inicialitza el limitador de taxa.
 
         Args:
@@ -687,7 +691,7 @@ class PasswordResetController:
         rate_limiter: Optional[RateLimiter] = None,
         ip_rate_limiter: Optional[RateLimiter] = None,
         background_task_runner: Optional[Callable[[Callable[[], None]], None]] = None,
-    ):
+    ) -> None:
         """Inicialitza el controlador de restabliment.
 
         Args:
@@ -776,6 +780,8 @@ class PasswordResetController:
         if rate_limit_error:
             return rate_limit_error
 
+        # Generem el token incondicionalment abans de comprovar l'existència de l'usuari
+        # per igualar el cost criptogràfic de CPU i evitar enumeració per temps (OWASP A07)
         token_data = self.token_manager.generate_token(normalized_email, now=now)
         if self.user_repo.exists(normalized_email):
             reset_link = f"{self.base_url}{token_data.token}"

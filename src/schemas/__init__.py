@@ -1,18 +1,21 @@
 """Paquet d'esquemes Pydantic per a les respostes estructurades dels agents."""
 
 from src.schemas.agent_schemas import (
-    FileItem,
-    DeveloperPlan,
+    ADRAlternative,
+    ArchitectureDecisionRecord,
     CodeReviewResponse,
+    DeveloperPlan,
+    FileItem,
     ImprovementItem,
-    ImprovementsResponse
+    ImprovementsResponse,
 )
 
 __all__ = [
+    "ADRAlternative",
+    "ArchitectureDecisionRecord",
     "FileItem",
     "DeveloperPlan",
     "CodeReviewResponse",
     "ImprovementItem",
-    "ImprovementsResponse"
+    "ImprovementsResponse",
 ]
-

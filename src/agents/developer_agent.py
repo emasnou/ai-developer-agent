@@ -18,10 +18,13 @@ from src.prompts.developer_prompts import (
 from src.schemas.agent_schemas import DeveloperPlan
 from src.services.github_service import GitHubService
 from src.services.llm_service import LLMService
+from src.utils.changelog_updater import update_changelog_file
+from src.utils.doc_updater import update_all_documentation
+from src.utils.github_templates import render_pull_request_body
 from src.utils.json_parser import parse_developer_json_response
 
-_SENSITIVE_ENV_VARS = ("GITHUB_TOKEN", "GEMINI_API_KEY", "OPENAI_API_KEY")
-_WORKSPACE_IGNORED_ITEMS = {
+_SENSITIVE_ENV_VARS: tuple[str, ...] = ("GITHUB_TOKEN", "GEMINI_API_KEY", "OPENAI_API_KEY")
+_WORKSPACE_IGNORED_ITEMS: set[str] = {
     ".git",
     "__pycache__",
     ".pytest_cache",
@@ -41,18 +44,32 @@ class DeveloperAgent(BaseAgent):
         self,
         llm_service: Optional[LLMService] = None,
         github_service: Optional[GitHubService] = None,
+        repo_name: Optional[str] = None,
     ) -> None:
         """Inicialitza el DeveloperAgent amb injecció opcional de serveis, política i logger.
 
         Args:
             llm_service: Instància opcional de LLMService per a injecció de dependències.
             github_service: Instància opcional de GitHubService per a injecció de dependències.
+            repo_name: Nom opcional del repositori (`owner/repo`) sobre el qual treballar.
         """
         super().__init__(
             agent_name="DeveloperAgent",
             llm_service=llm_service,
             github_service=github_service,
+            repo_name=repo_name,
         )
+
+    def _get_workspace_repo_slug(self) -> str:
+        """Obté un identificador de directori segur basat en el repositori actiu.
+
+        Returns:
+            str: Nom del repositori normalitzat (`owner__repo`) o `'default_repo'`.
+        """
+        repo_name = self.active_repo_name
+        if not repo_name:
+            return "default_repo"
+        return repo_name.strip().replace("/", "__")
 
     def _parse_json_response(self, text: str) -> dict[str, Any]:
         """Extreu i normalitza el pla de fitxers JSON/YAML de la resposta del LLM.
@@ -74,7 +91,11 @@ class DeveloperAgent(BaseAgent):
             raise
 
     def _prepare_workspace_environment(self, issue_number: int) -> Path:
-        """Crea una còpia aïllada del projecte al workspace excloent secrets (.env) i logs.
+        """Crea un directori de workspace aïllat per al repositori i Issue actuals.
+
+        Si el repositori actiu correspon al propi projecte local o no s'ha especificat,
+        duplica l'arbre local excloent secrets (`.env`) i logs. Si és un altre repositori
+        de GitHub, inicialitza un workspace net per descarregar-hi el contingut remot.
 
         Args:
             issue_number: Número d'Issue o PR que identifica el workspace.
@@ -83,10 +104,24 @@ class DeveloperAgent(BaseAgent):
             Path: Ruta absoluta del directori del workspace creat.
         """
         root_dir = Path(".").resolve()
-        workspace_dir = root_dir / ".workspace" / f"issue_{issue_number}"
+        repo_slug = self._get_workspace_repo_slug()
+        workspace_dir = root_dir / ".workspace" / repo_slug / f"issue_{issue_number}"
 
         if workspace_dir.exists():
             shutil.rmtree(workspace_dir)
+
+        active_repo = self.active_repo_name
+        is_local_repo = active_repo is None or active_repo.endswith(f"/{root_dir.name}")
+
+        if not is_local_repo:
+            self.logger.info(
+                f"Inicialitzant workspace net per al repositori '{active_repo}': {workspace_dir}"
+            )
+            print(
+                f"📦 [DeveloperAgent] Preparant workspace per a '{active_repo}': {workspace_dir}..."
+            )
+            workspace_dir.mkdir(parents=True, exist_ok=True)
+            return workspace_dir
 
         self.logger.info(f"Duplicant entorn local cap al workspace: {workspace_dir}")
         print(f"📦 [DeveloperAgent] Duplicant entorn local cap al workspace: {workspace_dir}...")
@@ -119,28 +154,58 @@ class DeveloperAgent(BaseAgent):
                 target_file.write_text(content, encoding="utf-8")
 
     def _download_main_branch_content(self, workspace_dir: Path) -> None:
-        """Sincronitza al workspace el contingut de la branca 'main' de GitHub.
+        """Sincronitza al workspace el contingut de la branca principal de GitHub.
 
         Args:
             workspace_dir: Ruta del workspace local.
         """
-        self._download_branch_content(workspace_dir, ref="main")
+        default_branch = self._resolve_default_branch()
+        self._download_branch_content(workspace_dir, ref=default_branch)
+
+    def _resolve_default_branch(self) -> str:
+        """Obté el nom de la branca principal del repositori actiu de manera segura.
+
+        Returns:
+            str: Nom de la branca per defecte (ex: `'main'` o `'master'`).
+        """
+        if hasattr(self.github, "get_default_branch"):
+            branch = self.github.get_default_branch()
+            if isinstance(branch, str) and branch.strip():
+                return branch.strip()
+        return "main"
 
     def _read_workspace_source_files(self, workspace_dir: Path) -> str:
-        """Llegeix el contingut dels fitxers font sincronitzats al workspace.
+        """Llegeix el contingut dels fitxers font i workflows sincronitzats al workspace.
 
         Args:
             workspace_dir: Ruta del workspace local.
 
         Returns:
-            str: Contingut concatenat dels fitxers Python dins de `src/`.
+            str: Contingut concatenat dels fitxers Python i workflows de GitHub Actions.
         """
+        candidate_files: list[Path] = []
         src_path = workspace_dir / "src"
-        if not src_path.exists():
+        if src_path.exists():
+            candidate_files.extend(sorted(src_path.rglob("*.py")))
+        else:
+            candidate_files.extend(
+                sorted(
+                    p
+                    for p in workspace_dir.rglob("*.py")
+                    if not any(part.startswith("test") for part in p.relative_to(workspace_dir).parts)
+                )
+            )
+
+        workflows_path = workspace_dir / ".github" / "workflows"
+        if workflows_path.exists():
+            candidate_files.extend(sorted(workflows_path.glob("*.yml")))
+            candidate_files.extend(sorted(workflows_path.glob("*.yaml")))
+
+        if not candidate_files:
             return "No hi ha fitxers existents al directori src/"
 
         contents: list[str] = []
-        for file in sorted(src_path.rglob("*.py")):
+        for file in candidate_files:
             try:
                 rel_path = file.relative_to(workspace_dir)
                 text = file.read_text(encoding="utf-8")
@@ -148,7 +213,7 @@ class DeveloperAgent(BaseAgent):
             except Exception as e:
                 self.logger.warning(f"Error en llegir el fitxer del workspace {file}: {e}")
 
-        return "\n".join(contents) if contents else "Cap fitxer .py trobat a src/"
+        return "\n".join(contents) if contents else "Cap fitxer trobat al workspace"
 
     def _write_files_to_workspace(
         self, files_list: list[dict[str, Any]], workspace_dir: Path
@@ -161,17 +226,26 @@ class DeveloperAgent(BaseAgent):
 
         Returns:
             list[Path]: Llista de rutes dels fitxers escrits.
+
+        Raises:
+            ValueError: Si una ruta de fitxer intenta sortir del workspace (Path Traversal).
         """
         saved_paths: list[Path] = []
+        resolved_workspace = workspace_dir.resolve()
         for file_item in files_list:
-            target_path = workspace_dir / file_item["path"]
+            target_path = (workspace_dir / file_item["path"]).resolve()
+            if not target_path.is_relative_to(resolved_workspace):
+                raise ValueError(
+                    f"Ruta de fitxer no permesa fora del workspace: '{file_item['path']}'"
+                )
             target_path.parent.mkdir(parents=True, exist_ok=True)
             content = file_item["content"]
 
-            try:
-                ast.parse(content)
-            except SyntaxError as e:
-                self.logger.warning(f"Alerta de sintaxi/indentació a {file_item['path']}: {e}")
+            if target_path.suffix == ".py":
+                try:
+                    ast.parse(content)
+                except SyntaxError as e:
+                    self.logger.warning(f"Alerta de sintaxi/indentació a {file_item['path']}: {e}")
 
             target_path.write_text(content, encoding="utf-8")
             saved_paths.append(target_path)
@@ -184,7 +258,7 @@ class DeveloperAgent(BaseAgent):
     def _build_workspace_env(workspace_dir: Path) -> dict[str, str]:
         """Construeix un entorn d'execució aïllat per a PyTest filtrant secrets sensibles.
 
-         Fixa el `PYTHONPATH` exclusivament als directoris del workspace (`workspace_dir`
+        Fixa el `PYTHONPATH` exclusivament als directoris del workspace (`workspace_dir`
         i `workspace_dir/src`) sense heretar rutes de l'entorn amfitrió per evitar
         contaminació creuada entre el repositori arrel i el workspace.
 
@@ -317,6 +391,64 @@ class DeveloperAgent(BaseAgent):
 
         return files_data
 
+    def _sync_workspace_changelog(
+        self,
+        workspace_dir: Path,
+        files_to_commit: list[dict[str, str]],
+        commit_msg: str,
+    ) -> None:
+        """Actualitza automàticament el CHANGELOG.md del workspace si hi ha nous canvis.
+
+        Args:
+            workspace_dir: Ruta del workspace local.
+            files_to_commit: Llista de fitxers que s'inclouran al commit.
+            commit_msg: Missatge en format Conventional Commits de la tasca resolta.
+        """
+        changelog_path = workspace_dir / "CHANGELOG.md"
+        if not changelog_path.exists():
+            return
+        if any(item["path"] == "CHANGELOG.md" for item in files_to_commit):
+            return
+        if update_changelog_file(changelog_path=changelog_path, commits=[commit_msg]):
+            files_to_commit.append(
+                {
+                    "path": "CHANGELOG.md",
+                    "content": changelog_path.read_text(encoding="utf-8"),
+                }
+            )
+            self.logger.info("CHANGELOG.md actualitzat automàticament al Workspace.")
+
+    def _sync_workspace_documentation(
+        self,
+        workspace_dir: Path,
+        files_to_commit: list[dict[str, str]],
+    ) -> None:
+        """Sincronitza automàticament la referència d'API i l'índex d'ADRs dins del workspace.
+
+        Args:
+            workspace_dir: Ruta del workspace local on s'han escrit els fitxers nous o modificats.
+            files_to_commit: Llista de fitxers que s'inclouran al commit de la Pull Request.
+        """
+        if not (workspace_dir / "src").exists() or not (workspace_dir / "docs").exists():
+            return
+        try:
+            updated_paths = update_all_documentation(root_dir=workspace_dir)
+        except Exception as err:
+            self.logger.warning(f"No s'ha pogut auto-sincronitzar la documentació del workspace: {err}")
+            return
+
+        existing_by_path = {item["path"]: item for item in files_to_commit}
+        for rel_path in updated_paths:
+            doc_file = workspace_dir / rel_path
+            if not doc_file.exists():
+                continue
+            content = doc_file.read_text(encoding="utf-8")
+            if rel_path in existing_by_path:
+                existing_by_path[rel_path]["content"] = content
+            else:
+                files_to_commit.append({"path": rel_path, "content": content})
+            self.logger.info(f"Documentació actualitzada automàticament al Workspace: {rel_path}")
+
     def _publish_solution_and_create_pr(
         self,
         issue: Any,
@@ -346,27 +478,32 @@ class DeveloperAgent(BaseAgent):
             }
             for item in files_data
         ]
+        commit_msg = f"feat(issue-{issue.number}): resolució Issue #{issue.number} ({summary})"
+        self._sync_workspace_changelog(workspace_dir, files_to_commit, commit_msg)
+        self._sync_workspace_documentation(workspace_dir, files_to_commit)
 
         print(f"\n🚀 [DeveloperAgent] Publicant {len(files_to_commit)} fitxers a '{branch_name}'...")
-        commit_msg = f"feat: resolució Issue #{issue.number} ({summary})"
         self.github.commit_and_push_files(branch_name, files_to_commit, commit_msg)
+
+        # Renderitzem el cos de la PR abans d'eliminar el workspace per permetre usar
+        # la plantilla .github/pull_request_template.md pròpia del repositori actiu
+        pr_body = render_pull_request_body(
+            issue_number=issue.number,
+            issue_title=issue.title,
+            branch_name=branch_name,
+            files_to_commit=files_to_commit,
+            attempt=attempt,
+            summary=summary,
+            workspace_dir=workspace_dir,
+        )
         shutil.rmtree(workspace_dir, ignore_errors=True)
 
-        files_summary = "\n".join([f"- `{item['path']}`" for item in files_to_commit])
-        pr_body = (
-            "Aquesta Pull Request ha estat generada automàticament per l'**Agent Desenvolupador "
-            "(Workspace Sincronitzat)**.\n\n"
-            f"- **Issue resolta:** #{issue.number}\n"
-            f"- **Branca origen:** `{branch_name}`\n"
-            f"- **Fitxers modificats/creats:**\n{files_summary}\n"
-            f"- **Tests executats:** Passats satisfactòriament en {attempt} intent/s"
-        )
-
+        default_branch = self._resolve_default_branch()
         pr_result = self.github.create_pull_request(
             title=f"feat: resolució automàtica Issue #{issue.number} - {issue.title}",
             body=pr_body,
             head_branch=branch_name,
-            base_branch="main",
+            base_branch=default_branch,
         )
         pr_url = pr_result.get("url") if pr_result else None
         self.logger.info(f"Pull Request creada correctament: {pr_url or 'N/A'}")
@@ -391,16 +528,20 @@ class DeveloperAgent(BaseAgent):
         self.logger.info(f"Iniciant desenvolupament automàtic per a la Issue #{issue_number}")
         print(f"\n🤖 [DeveloperAgent] Carregant la Issue #{issue_number} des de GitHub...")
         issue = self.github.get_issue(issue_number)
+        default_branch = self._resolve_default_branch()
 
         workspace_dir = self._prepare_workspace_environment(issue_number)
-        self._download_branch_content(workspace_dir, ref="main")
+        self._download_branch_content(workspace_dir, ref=default_branch)
 
         branch_name = f"feature/issue-{issue_number}"
         self.logger.info(f"Creant branca remota '{branch_name}'...")
-        print(f"🌿 [DeveloperAgent] Creant la branca remota '{branch_name}' a partir de 'main'...")
-        self.github.create_branch(base_branch="main", new_branch=branch_name)
+        print(
+            f"🌿 [DeveloperAgent] Creant la branca remota '{branch_name}' "
+            f"a partir de '{default_branch}'..."
+        )
+        self.github.create_branch(base_branch=default_branch, new_branch=branch_name)
 
-        repo_tree = self.github.get_repository_tree(ref="main")
+        repo_tree = self.github.get_repository_tree(ref=default_branch)
         system_prompt = DEVELOPER_SYSTEM_PROMPT.format(
             code_policy=self.code_policy,
             repo_tree="\n".join(repo_tree) if repo_tree else "Repositori buit",
@@ -527,10 +668,13 @@ class DeveloperAgent(BaseAgent):
                         }
                         for item in files_data
                     ]
+                    remediation_msg = "fix: remediació multi-fitxer segons Code Review"
+                    self._sync_workspace_changelog(workspace_dir, files_to_commit, remediation_msg)
+                    self._sync_workspace_documentation(workspace_dir, files_to_commit)
                     self.github.commit_and_push_files(
                         branch_name,
                         files_to_commit,
-                        "fix: remediació multi-fitxer segons Code Review",
+                        remediation_msg,
                     )
                     shutil.rmtree(workspace_dir, ignore_errors=True)
                     return {"success": True, "branch": branch_name}

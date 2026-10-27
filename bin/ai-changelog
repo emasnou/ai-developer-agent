@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# bin/ai-changelog — Script de gestió i actualització automàtica de CHANGELOG.md
+# Segueix Keep a Changelog i Semantic Versioning (MAJOR.MINOR.PATCH) a partir de
+# missatges Conventional Commits (src.utils.changelog_updater).
+# ==============================================================================
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+
+CHANGELOG_PATH="${PROJECT_ROOT}/CHANGELOG.md"
+RELEASE_VERSION=""
+SHOW_UNRELEASED=false
+declare -a COMMIT_ARGS=()
+
+usage() {
+    cat <<EOF
+📦 Ús: $(basename "$0") [OPCIONS]
+
+Actualitza automàticament el fitxer CHANGELOG.md seguint Keep a Changelog i SemVer.
+Si s'executa sense paràmetres, llegeix els commits recents de Git i sincronitza [Unreleased].
+
+Opcions:
+  -a, --add "<commit>"            Afegeix un missatge Conventional Commit (es pot repetir).
+                                  Prefixos suportats: feat:, fix:, security:, refactor:, perf:, docs:
+  -r, --release <X.Y.Z>           Promociona la secció [Unreleased] a la nova versió SemVer indicada.
+  -p, --path <ruta>               Ruta al fitxer CHANGELOG.md (per defecte: CHANGELOG.md).
+  -s, --show                      Mostra per terminal les entrades actuals de [Unreleased] i surt.
+  -h, --help                      Mostra aquesta ajuda i surt.
+
+Exemples:
+  $(basename "$0")
+  $(basename "$0") --add "feat(cli): afegir scripts operatius al directori bin/"
+  $(basename "$0") --add "security(auth): validació en temps constant" --release 0.4.0
+  $(basename "$0") --release 0.4.0
+  $(basename "$0") --show
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -a|--add)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar el missatge de commit per a $1."; exit 1; }
+            COMMIT_ARGS+=("--add" "$2")
+            shift 2
+            ;;
+        -r|--release)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar la versió SemVer (X.Y.Z) per a $1."; exit 1; }
+            RELEASE_VERSION="$2"
+            shift 2
+            ;;
+        -p|--path)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar la ruta del fitxer per a $1."; exit 1; }
+            CHANGELOG_PATH="$2"
+            shift 2
+            ;;
+        -s|--show)
+            SHOW_UNRELEASED=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            log_error "Paràmetre desconegut: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+cd "${PROJECT_ROOT}"
+
+if [[ "${SHOW_UNRELEASED}" == true ]]; then
+    "${PYTHON_BIN}" -c '
+import re, sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.exists():
+    print(f"❌ No existeix el fitxer: {path}", file=sys.stderr)
+    sys.exit(1)
+content = path.read_text(encoding="utf-8")
+match = re.search(r"(^## \[Unreleased\].*?)(?=^---\s*\n^## \[|^## \[|\Z)", content, flags=re.M | re.S)
+print(match.group(1).strip() if match else "ℹ️ No s\x27ha trobat la secció [Unreleased].")
+' "${CHANGELOG_PATH}"
+    exit 0
+fi
+
+CMD_ARGS=("--path" "${CHANGELOG_PATH}")
+if [[ ${#COMMIT_ARGS[@]} -gt 0 ]]; then
+    CMD_ARGS+=("${COMMIT_ARGS[@]}")
+fi
+if [[ -n "${RELEASE_VERSION}" ]]; then
+    CMD_ARGS+=("--release" "${RELEASE_VERSION}")
+fi
+
+exec "${PYTHON_BIN}" -m src.utils.changelog_updater "${CMD_ARGS[@]}"
+

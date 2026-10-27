@@ -40,10 +40,14 @@ jobs:
           pip install -r requirements.txt
           pip install -e .
 
-      - name: 🔍 Lint with Ruff
+      - name: 🔍 Lint with Ruff (PEP 8 + pydocstyle Google + Bandit)
         continue-on-error: true
         run: |
           ruff check src/ tests/
+
+      - name: 📚 Validate Docstrings & Type Hints (Docs-as-Code Gate)
+        run: |
+          python -m src.utils.doc_updater --validate-docstrings
 
       - name: 🔎 Type check with Mypy
         continue-on-error: true

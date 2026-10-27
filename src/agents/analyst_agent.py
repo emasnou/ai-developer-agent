@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional
 
 from src.agents.base_agent import BaseAgent
-from src.prompts.analyst_prompts import ANALYST_SYSTEM_PROMPT
+from src.prompts.analyst_prompts import build_analyst_system_prompt
 from src.services.github_service import GitHubService
 from src.services.llm_service import LLMService
+from src.utils.github_templates import FEATURE_ISSUE_TEMPLATE_REL_PATH
 
 
 class AnalystAgent(BaseAgent):
@@ -17,23 +19,32 @@ class AnalystAgent(BaseAgent):
         self,
         llm_service: Optional[LLMService] = None,
         github_service: Optional[GitHubService] = None,
+        repo_name: Optional[str] = None,
+        issue_template_path: Path = Path(FEATURE_ISSUE_TEMPLATE_REL_PATH),
     ) -> None:
-        """Inicialitza l'Agent Analista amb els serveis de LLM, GitHub i logging.
+        """Inicialitza l'Agent Analista amb els serveis de LLM, GitHub, plantilla i logging.
 
         Args:
             llm_service: Instància opcional de LLMService per a injecció de dependències.
             github_service: Instància opcional de GitHubService per a injecció de dependències.
+            repo_name: Nom opcional del repositori (`owner/repo`) on crear les Issues.
+            issue_template_path: Ruta de la plantilla d'Issue de GitHub a aplicar.
         """
         super().__init__(
             agent_name="AnalystAgent",
             llm_service=llm_service,
             github_service=github_service,
+            repo_name=repo_name,
         )
+        self.issue_template_path: Path = issue_template_path
 
     def process_requirement_and_create_issue(
         self, requirement: str, issue_title: str
     ) -> dict[str, Any]:
         """Analitza el requeriment de l'usuari i publica una Issue estructurada a GitHub.
+
+        Utilitza la plantilla `.github/ISSUE_TEMPLATE/feature_request.md` per garantir
+        que la Issue inclogui Història d'Usuari, Criteris d'Acceptació BDD i Matriu de QA.
 
         Args:
             requirement: Descripció en llenguatge natural de la funcionalitat requerida.
@@ -47,10 +58,11 @@ class AnalystAgent(BaseAgent):
         """
         self.logger.info(f"Iniciant anàlisi de requeriment per a la tasca: '{issue_title}'")
         print("🤖 [AnalystAgent] Analitzant requeriments i generant matriu de QA amb Gemini...")
+        system_prompt = build_analyst_system_prompt(template_path=self.issue_template_path)
         try:
             markdown_body = self.llm.generate_task_spec(
                 requirement,
-                ANALYST_SYSTEM_PROMPT,
+                system_prompt,
                 force_json=False,
             )
         except Exception as e:
@@ -69,4 +81,3 @@ class AnalystAgent(BaseAgent):
         except Exception as e:
             self.logger.error(f"Error en publicar la Issue a GitHub: {e}")
             raise
-

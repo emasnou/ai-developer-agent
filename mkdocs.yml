@@ -1,0 +1,60 @@
+site_name: "AI Developer Agent — Portal de Documentació (Docs-as-Code)"
+site_description: "Plataforma d'agents d'IA autònoms multi-repositori amb documentació sincronitzada automàticament."
+repo_url: "https://github.com/emasnou/ai-developer-agent"
+repo_name: "emasnou/ai-developer-agent"
+docs_dir: "docs"
+
+theme:
+  name: material
+  language: ca
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_signature_annotations: true
+            separate_signature: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Inici (Diátaxis): index.md
+  - Arquitectura i Governança:
+      - Política de Codi i Seguretat: code_policy.md
+      - Política de Documentació (Docs-as-Code): Politica_Documentacio.md
+      - Decisions d'Arquitectura (ADRs):
+          - Índex i Governança d'ADRs: adr/README.md
+          - Plantilla Oficial d'ADR (ADR-0000): adr/0000-template-adr-agent-ia.md
+          - ADR-0001 Sortides Estructurades Pydantic: adr/0001-sortides-estructurades-pydantic-i-parser-resilient.md
+          - ADR-0002 Multi-Repositori i Workspaces: adr/0002-arquitectura-multi-repositori-i-workspaces-aillats.md
+  - Referència Tècnica d'API (Auto-generada):
+      - Mapa i Especificació de Mòduls: reference/index.md
+

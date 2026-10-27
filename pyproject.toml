@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-developer-agent"
-version = "0.1.0"
+version = "0.3.0"
 description = "Agent autònom basat en IA per automatitzar el cicle complet de desenvolupament de programari amb GitHub i Google Gemini."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,9 +28,16 @@ dev = [
   "bandit>=1.7.8",
   "types-PyYAML>=6.0.0",
 ]
+docs = [
+  "mkdocs>=1.6.0",
+  "mkdocs-material>=9.5.0",
+  "mkdocstrings[python]>=0.25.0",
+]
 
 [project.scripts]
 ai-agent = "src.main:main"
+ai-changelog = "src.utils.changelog_updater:main"
+ai-docs = "src.utils.doc_updater:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -71,14 +78,20 @@ select = [
   "UP",  # pyupgrade
   "B",   # flake8-bugbear
   "S",   # flake8-bandit (seguretat OWASP)
+  "D",   # pydocstyle (Linter de Docstrings PEP 257 / Google Style)
 ]
 ignore = [
   "E501", # longitud de línia gestionada pel formatador o prompts llargs
   "S101", # permetre l'ús d'assert als tests
+  "D203", # incompatible amb D211 (sense línia en blanc abans de classe)
+  "D213", # incompatible amb D212 (resum a la primera línia de docstring)
 ]
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "S105", "S106"]
+"tests/**/*.py" = ["S101", "S105", "S106", "D101", "D102", "D107"]
 
 [tool.mypy]
 python_version = "3.10"

@@ -4,13 +4,14 @@ Aquest mòdul implementa un formatador JSON estructurat amb nivells INFO, WARNIN
 garantint la creació automàtica del directori de logs i la rotació automàtica per mida.
 """
 
+from __future__ import annotations
+
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 class JSONFormatter(logging.Formatter):
@@ -96,7 +97,7 @@ class StructuredAgentAdapter(logging.LoggerAdapter):
         """
         super().__init__(logger, {"agent_id": agent_id})
 
-    def process(self, msg: str, kwargs: Any) -> tuple[str, dict]:
+    def process(self, msg: str, kwargs: Any) -> tuple[str, dict[str, Any]]:
         """Injecta el camp `agent_id` dins del diccionari `extra` del registre.
 
         Args:
@@ -104,7 +105,7 @@ class StructuredAgentAdapter(logging.LoggerAdapter):
             kwargs: Arguments de paraula clau passats a la crida de logging.
 
         Returns:
-            tuple[str, dict]: Tupla amb el missatge i els arguments enriquits.
+            tuple[str, dict[str, Any]]: Tupla amb el missatge i els arguments enriquits.
         """
         kwargs.setdefault("extra", {})["agent_id"] = self.extra["agent_id"]
         return msg, kwargs

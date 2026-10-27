@@ -14,7 +14,7 @@ from src.services.github_service import GitHubService
 from src.services.llm_service import LLMService
 from src.utils.logger import AgentLogger, StructuredAgentAdapter
 
-DEFAULT_POLICY_FALLBACK = "Aplica PEP8 i OWASP Top 10."
+DEFAULT_POLICY_FALLBACK: str = "Aplica PEP8 i OWASP Top 10."
 
 
 class BaseAgent:
@@ -26,6 +26,7 @@ class BaseAgent:
         llm_service: Optional[LLMService] = None,
         github_service: Optional[GitHubService] = None,
         policy_path: Path = Path("docs/code_policy.md"),
+        repo_name: Optional[str] = None,
     ) -> None:
         """Inicialitza l'agent amb injecció opcional de serveis i càrrega de política.
 
@@ -34,9 +35,11 @@ class BaseAgent:
             llm_service: Instància opcional de LLMService (per a injecció o mocks en tests).
             github_service: Instància opcional de GitHubService (per a injecció o mocks en tests).
             policy_path: Ruta al fitxer Markdown amb la política de codi i seguretat.
+            repo_name: Nom opcional del repositori (`owner/repo`) sobre el qual operar.
         """
         self._llm: Optional[LLMService] = llm_service
         self._github: Optional[GitHubService] = github_service
+        self._repo_name: Optional[str] = repo_name.strip() if repo_name else None
         base_logger = AgentLogger.get_logger(agent_name)
         self.logger = StructuredAgentAdapter(base_logger, agent_name)
         self.code_policy: str = (
@@ -44,6 +47,19 @@ class BaseAgent:
             if policy_path.exists()
             else DEFAULT_POLICY_FALLBACK
         )
+
+    @property
+    def active_repo_name(self) -> Optional[str]:
+        """Obté el nom del repositori actiu associat a l'agent.
+
+        Returns:
+            Optional[str]: Nom del repositori (`owner/repo`) o None si no s'ha definit.
+        """
+        if self._github is not None and hasattr(self._github, "active_repo_name"):
+            active = getattr(self._github, "active_repo_name")
+            if isinstance(active, str) and active:
+                return active
+        return self._repo_name
 
     @property
     def llm(self) -> LLMService:
@@ -73,7 +89,7 @@ class BaseAgent:
             GitHubService: Client configurat del servei de GitHub.
         """
         if self._github is None:
-            self._github = GitHubService()
+            self._github = GitHubService(repo_name=self._repo_name)
         return self._github
 
     @github.setter

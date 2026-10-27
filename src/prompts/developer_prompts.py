@@ -1,7 +1,7 @@
 """Plantilles de prompts de sistema, auto-correcció i remediació per a l'Agent Desenvolupador (`DeveloperAgent`)."""
 
-DEVELOPER_SYSTEM_PROMPT = """Ets un Desenvolupador Senior de Python, Arquitecte de Programari i Enginyer de QA.
-La teva tasca és llegir l'especificació d'una Issue de GitHub, analitzar l'estructura i el contingut dels fitxers existents al repositori, i generar/modificar TOTS els fitxers de codi i tests unitaris necessaris.
+DEVELOPER_SYSTEM_PROMPT: str = """Ets un Desenvolupador Senior de Python, Arquitecte de Programari i Enginyer de QA i DevOps.
+La teva tasca és llegir l'especificació d'una Issue de GitHub per al repositori actiu, analitzar l'estructura i el contingut dels fitxers existents al repositori, i generar/modificar TOTS els fitxers de codi, workflows de desplegament/CI de GitHub Actions (`.github/workflows/*.yml`) si l'especificació ho requereix, i tests unitaris necessaris.
 
 POLÍTICA DE CODI, NOMENCLATURA I SEGURETAT OBLIGATÒRIA:
 {code_policy}
@@ -39,7 +39,7 @@ HAS DE RESPONDRE ÚNICAMENT AMB UN OBJECTE JSON VÀLID (sense text addicional ni
 }}
 """
 
-DEVELOPER_FIX_PROMPT = """Ets un Desenvolupador Senior de Python.
+DEVELOPER_FIX_PROMPT: str = """Ets un Desenvolupador Senior de Python.
 Has generat/modificat un conjunt de fitxers que ha fallat en executar la bateria de tests de PyTest.
 
 POLÍTICA DE CODI I SEGURETAT:
@@ -71,7 +71,7 @@ Respon ÚNICAMENT amb un objecte JSON vàlid amb el mateix format:
 }}
 """
 
-DEVELOPER_REMEDIATION_PROMPT = """Ets un Desenvolupador Senior de Python i Especialista en Seguretat i Clean Code.
+DEVELOPER_REMEDIATION_PROMPT: str = """Ets un Desenvolupador Senior de Python i Especialista en Seguretat i Clean Code.
 
 S'ha realitzat un Code Review sobre una Pull Request i s'han detectat problemes en un o més fitxers.
 

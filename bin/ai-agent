@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# bin/ai-agent — Script d'execució de l'Agent d'IA Multi-Repositori
+# Permet iniciar el menú interactiu o executar directament per paràmetres qualsevol
+# dels agents especialitzats (AnalystAgent, DeveloperAgent, CodeReviewAgent).
+# ==============================================================================
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+
+ACTION="menu"
+TARGET_REPO=""
+ISSUE_NUMBER=""
+PR_NUMBER=""
+ISSUE_TITLE=""
+ISSUE_DESC=""
+LIST_REPOS=false
+
+usage() {
+    cat <<EOF
+🤖 Ús: $(basename "$0") [OPCIONS]
+
+Executa la plataforma d'agents autònoms d'IA per a desenvolupament de programari.
+Si no s'indica cap acció, obre el menú interactiu principal multi-repositori.
+
+Opcions:
+  -r, --repo <owner/repo>         Defineix el repositori actiu de GitHub sobre el qual treballar.
+  -l, --list-repos                Llista tots els repositoris de GitHub disponibles i surt.
+  -a, --action <acció>            Acció a executar (per defecte: menu):
+                                    - menu        : Menú principal interactiu complet.
+                                    - select-repo : Selector interactiu de repositori (Opció 1).
+                                    - analyst     : Crear una nova Issue des d'un requeriment (Opció 2).
+                                    - develop     : Desenvolupar i provar una Issue amb PyTest (Opció 3).
+                                    - review      : Auditar una Pull Request amb OWASP Top 10 (Opció 4).
+                                    - remediate   : Remediar i refactoritzar una PR (Opció 5).
+  -i, --issue <número>            Número d'Issue per desenvolupar directament (amb --action develop).
+  -p, --pr <número>               Número de Pull Request per auditar o remediar (--action review|remediate).
+  -t, --title "<títol>"           Títol de la Issue a crear (amb --action analyst).
+  -d, --description "<text>"      Descripció del requeriment funcional (amb --action analyst).
+  -h, --help                      Mostra aquesta ajuda i surt.
+
+Exemples:
+  $(basename "$0")
+  $(basename "$0") --repo emasnou/ai-developer-agent
+  $(basename "$0") --list-repos
+  $(basename "$0") --repo emasnou/ai-developer-agent --action analyst -t " Gestió JWT" -d "Afegir autenticació JWT"
+  $(basename "$0") --repo emasnou/ai-developer-agent --action develop --issue 12
+  $(basename "$0") --repo emasnou/ai-developer-agent --action review --pr 15
+  $(basename "$0") --repo emasnou/ai-developer-agent --action remediate --pr 15
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -r|--repo)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar el valor per a $1 (ex: owner/repo)."; exit 1; }
+            TARGET_REPO="$2"
+            shift 2
+            ;;
+        -l|--list-repos)
+            LIST_REPOS=true
+            shift
+            ;;
+        -a|--action)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar l'acció per a $1."; exit 1; }
+            ACTION="$2"
+            shift 2
+            ;;
+        -i|--issue)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar el número d'Issue per a $1."; exit 1; }
+            ISSUE_NUMBER="$2"
+            shift 2
+            ;;
+        -p|--pr)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar el número de PR per a $1."; exit 1; }
+            PR_NUMBER="$2"
+            shift 2
+            ;;
+        -t|--title)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar el títol per a $1."; exit 1; }
+            ISSUE_TITLE="$2"
+            shift 2
+            ;;
+        -d|--description)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar la descripció per a $1."; exit 1; }
+            ISSUE_DESC="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            log_error "Paràmetre desconegut: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+cd "${PROJECT_ROOT}"
+
+if [[ -n "${TARGET_REPO}" ]]; then
+    export GITHUB_REPO="${TARGET_REPO}"
+fi
+
+if [[ "${LIST_REPOS}" == true ]]; then
+    "${PYTHON_BIN}" -c '
+import sys
+from src.services.github_service import GitHubService
+
+service = GitHubService(require_repo=False)
+repos = service.list_available_repositories()
+if not repos:
+    print("ℹ️ No s\x27han trobat repositoris configurats.")
+    sys.exit(0)
+print("📋 Repositoris de GitHub disponibles:")
+for idx, r in enumerate(repos, start=1):
+    marker = " (actiu)" if r == service.active_repo_name else ""
+    print(f"  [{idx}] {r}{marker}")
+'
+    exit 0
+fi
+
+case "${ACTION}" in
+    menu)
+        exec "${PYTHON_BIN}" -m src.main
+        ;;
+    select-repo|repo)
+        exec "${PYTHON_BIN}" -c '
+from src.main import handle_repository_selection
+handle_repository_selection()
+'
+        ;;
+    analyst)
+        exec "${PYTHON_BIN}" -c '
+import sys
+from src.agents.analyst_agent import AnalystAgent
+from src.main import handle_analyst_option
+from src.services.github_service import GitHubService
+
+title, desc = sys.argv[1], sys.argv[2]
+if title and desc:
+    service = GitHubService(require_repo=True)
+    agent = AnalystAgent(github_service=service, repo_name=service.active_repo_name)
+    res = agent.process_requirement_and_create_issue(desc, title)
+    print(f"✅ Issue creada a {service.active_repo_name}: {res[\x27url\x27]}")
+else:
+    handle_analyst_option()
+' "${ISSUE_TITLE}" "${ISSUE_DESC}"
+        ;;
+    develop)
+        exec "${PYTHON_BIN}" -c '
+import sys
+from src.agents.developer_agent import DeveloperAgent
+from src.main import handle_developer_option
+from src.services.github_service import GitHubService
+
+issue_arg = sys.argv[1]
+if issue_arg:
+    if not issue_arg.isdigit():
+        print("❌ El número d\x27Issue ha de ser un enter positiu.", file=sys.stderr)
+        sys.exit(1)
+    service = GitHubService(require_repo=True)
+    agent = DeveloperAgent(github_service=service, repo_name=service.active_repo_name)
+    res = agent.develop_and_test(issue_number=int(issue_arg))
+    sys.exit(0 if res.get("success") else 1)
+else:
+    handle_developer_option()
+' "${ISSUE_NUMBER}"
+        ;;
+    review)
+        exec "${PYTHON_BIN}" -c '
+import sys
+from src.agents.code_review_agent import CodeReviewAgent
+from src.main import handle_review_option
+from src.services.github_service import GitHubService
+
+pr_arg = sys.argv[1]
+if pr_arg:
+    if not pr_arg.isdigit():
+        print("❌ El número de PR ha de ser un enter positiu.", file=sys.stderr)
+        sys.exit(1)
+    pr_num = int(pr_arg)
+    service = GitHubService(require_repo=True)
+    reviewer = CodeReviewAgent(github_service=service, repo_name=service.active_repo_name)
+    res = reviewer.review_pull_request(pr_number=pr_num)
+    print(res.get("report", ""))
+    if res.get("approved"):
+        reviewer.create_future_improvement_issues(pr_number=pr_num, review_report=res["report"])
+    sys.exit(0 if res.get("approved") else 1)
+else:
+    handle_review_option()
+' "${PR_NUMBER}"
+        ;;
+    remediate)
+        exec "${PYTHON_BIN}" -c '
+import sys
+from src.agents.developer_agent import DeveloperAgent
+from src.main import handle_remediation_option
+from src.services.github_service import GitHubService
+
+pr_arg = sys.argv[1]
+if pr_arg:
+    if not pr_arg.isdigit():
+        print("❌ El número de PR ha de ser un enter positiu.", file=sys.stderr)
+        sys.exit(1)
+    service = GitHubService(require_repo=True)
+    agent = DeveloperAgent(github_service=service, repo_name=service.active_repo_name)
+    res = agent.remediate_pull_request(pr_number=int(pr_arg))
+    sys.exit(0 if res.get("success") else 1)
+else:
+    handle_remediation_option()
+' "${PR_NUMBER}"
+        ;;
+    *)
+        log_error "Acció no reconeguda: '${ACTION}'. Valors vàlids: menu, select-repo, analyst, develop, review, remediate."
+        usage
+        exit 1
+        ;;
+esac
+

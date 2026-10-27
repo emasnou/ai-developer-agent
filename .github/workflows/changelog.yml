@@ -1,0 +1,58 @@
+name: 📦 Automated Changelog Updater
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*.*.*" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Versió SemVer opcional a publicar (ex: 0.4.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    name: 📝 Validate & Sync CHANGELOG.md
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+
+    steps:
+      - name: 📥 Checkout repository with history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 🔄 Update CHANGELOG.md from Conventional Commits
+        env:
+          RELEASE_VERSION: ${{ github.event.inputs.release_version || (startsWith(github.ref, 'refs/tags/v') && substring(github.ref, 11, 20)) || '' }}
+        run: |
+          if [ -n "$RELEASE_VERSION" ]; then
+            python -m src.utils.changelog_updater --release "$RELEASE_VERSION"
+          else
+            python -m src.utils.changelog_updater
+          fi
+
+      - name: 🚀 Commit and push updated CHANGELOG.md on main
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          if [ -n "$(git status --porcelain CHANGELOG.md)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add CHANGELOG.md
+            git commit -m "chore(changelog): actualització automàtica de CHANGELOG.md [skip ci]"
+            git push origin HEAD:main
+          else
+            echo "ℹ️ Cap canvi pendent d'escriure a CHANGELOG.md."
+          fi
+

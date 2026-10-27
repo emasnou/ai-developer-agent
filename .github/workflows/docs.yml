@@ -1,0 +1,88 @@
+name: 📚 Docs-as-Code Sync & MkDocs Portal
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "docs-sync-${{ github.ref }}"
+  cancel-in-progress: false
+
+jobs:
+  sync-and-build-docs:
+    name: 🔄 Sync API Reference, ADRs & Build MkDocs
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐍 Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 📦 Install project and documentation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e ".[docs]"
+
+      - name: 🛡️ Validate Docstrings & Type Hints (AST Gate)
+        run: |
+          python -m src.utils.doc_updater --validate-docstrings
+
+      - name: 🔄 Synchronize Reference Docs & ADR Index
+        run: |
+          python -m src.utils.doc_updater
+
+      - name: 💾 Auto-commit updated documentation on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet docs/reference/index.md docs/adr/README.md; then
+            git add docs/reference/index.md docs/adr/README.md
+            git commit -m "docs(auto): sincronitza referència d'API i índex d'ADRs [skip ci]"
+            git push origin HEAD:main
+          else
+            echo "ℹ️ La documentació tècnica ja es troba sincronitzada."
+          fi
+
+      - name: 🏗️ Build MkDocs Material Portal
+        run: |
+          mkdocs build --strict
+
+      - name: 📤 Upload GitHub Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+  deploy-pages:
+    name: 🚀 Deploy Portal to GitHub Pages
+    needs: sync-and-build-docs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 🌐 Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+

@@ -13,10 +13,12 @@ from typing import Any, Sequence
 import yaml
 from json_repair import repair_json
 
-_FENCE_START_RE = re.compile(r"```(?:json|yaml)?\s*", flags=re.MULTILINE)
-_FENCE_END_RE = re.compile(r"```\s*$", flags=re.MULTILINE)
-_TRIPLE_QUOTES_RE = re.compile(r'("(?:content|code)"\s*:\s*)(\'\'\'|""")([\s\S]*?)(\2)')
-_INVALID_ESCAPE_RE = re.compile(r'\\(?![\\"/bfnrtu]|u[0-9a-fA-F]{4})')
+_FENCE_START_RE: re.Pattern[str] = re.compile(r"```(?:json|yaml)?\s*", flags=re.MULTILINE)
+_FENCE_END_RE: re.Pattern[str] = re.compile(r"```\s*$", flags=re.MULTILINE)
+_TRIPLE_QUOTES_RE: re.Pattern[str] = re.compile(
+    r'("(?:content|code)"\s*:\s*)(\'\'\'|""")([\s\S]*?)(\2)'
+)
+_INVALID_ESCAPE_RE: re.Pattern[str] = re.compile(r'\\(?![\\"/bfnrtu]|u[0-9a-fA-F]{4})')
 
 
 def clean_markdown_fences(text: str) -> str:
@@ -144,7 +146,7 @@ def parse_developer_json_response(text: str) -> dict[str, Any]:
     if not text or not text.strip():
         raise ValueError("Resposta buida del model LLM.")
 
-    # 1. Càrrega directa nativa (habitual amb Structured Outputs)
+    # Prioritzem json.loads directe per evitar sobrecàrrega de regex quan Gemini usa Structured Outputs
     try:
         parsed = json.loads(text.strip(), strict=False)
         if isinstance(parsed, dict) and "files" in parsed:
@@ -152,12 +154,12 @@ def parse_developer_json_response(text: str) -> dict[str, Any]:
     except Exception:
         pass
 
-    # 2. Neteja de blocs Markdown i triples cometes
+    # Models lleugers (ex: flash-lite) sovint embolcallen el JSON en blocs Markdown o triples cometes Python
     cleaned = clean_markdown_fences(text)
     preprocessed = replace_triple_quoted_strings(cleaned)
     json_candidate = extract_json_object_bounds(preprocessed)
 
-    # 3. Intent natiu i amb barres sanititzades sobre el candidat
+    # El codi Python generat dins del JSON pot contenir regex amb barres invertides no escapades
     for candidate in (json_candidate, sanitize_invalid_escapes(json_candidate)):
         try:
             parsed = json.loads(candidate, strict=False)
@@ -166,7 +168,7 @@ def parse_developer_json_response(text: str) -> dict[str, Any]:
         except Exception:
             pass
 
-    # 4. Intent amb json_repair sobre el candidat i sobre el text netejat complet
+    # Si l'estructura té cometes o comes truncades pel límit de tokens, reparem l'arbre sintàctic
     for source in (json_candidate, cleaned):
         try:
             extracted = _extract_files_from_repaired(repair_json(source, return_objects=True))
@@ -175,7 +177,7 @@ def parse_developer_json_response(text: str) -> dict[str, Any]:
         except Exception:
             pass
 
-    # 5. Fallback amb PyYAML
+    # Últim recurs amb YAML perquè és un superconjunt més tolerant amb salts de línia no escapats
     try:
         extracted_yaml = _extract_files_from_repaired(yaml.safe_load(json_candidate))
         if extracted_yaml is not None:
