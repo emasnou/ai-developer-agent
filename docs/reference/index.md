@@ -13,6 +13,7 @@
 | `src.agents.code_review_agent` | [`src/agents/code_review_agent.py`](../../src/agents/code_review_agent.py) | Agent CodeReview per auditar la qualitat del codi, el rendiment i la seguretat (OWASP Top 10). | `CodeReviewAgent` |
 | `src.agents.developer_agent` | [`src/agents/developer_agent.py`](../../src/agents/developer_agent.py) | Agent Desenvolupador per a la generació, validació amb PyTest i remediació de codi en workspaces aïllats. | `DeveloperAgent` |
 | `src.main` | [`src/main.py`](../../src/main.py) | Punt d'entrada de la interfície de línia d'ordres (CLI) per a l'Agent d'IA multi-repositori. | `handle_repository_selection`, `handle_analyst_option`, `handle_developer_option`, `handle_review_option`, `handle_remediation_option`, `main` |
+| `src.password_reset` | [`src/password_reset.py`](../../src/password_reset.py) | Mòdul per a la gestió segura del restabliment de contrasenyes. | `TokenValidationError`, `ExpiredTokenError`, `InvalidTokenError`, `PasswordValidationError`, `ResetTokenData`, `PasswordResetTokenManager`, `UserRepository`, `EmailService`, `RateLimiter`, `PasswordResetController`, `validate_email_format`, `validate_password_complexity` |
 | `src.prompts.analyst_prompts` | [`src/prompts/analyst_prompts.py`](../../src/prompts/analyst_prompts.py) | Plantilles de prompts de sistema per a l'Agent Analista (`AnalystAgent`). | `build_analyst_system_prompt` |
 | `src.prompts.developer_prompts` | [`src/prompts/developer_prompts.py`](../../src/prompts/developer_prompts.py) | Plantilles de prompts de sistema, auto-correcció i remediació per a l'Agent Desenvolupador (`DeveloperAgent`). | *(Mòdul de constants)* |
 | `src.prompts.review_prompts` | [`src/prompts/review_prompts.py`](../../src/prompts/review_prompts.py) | Plantilles de prompts per a l'auditoria de codi i l'extracció de millores (`CodeReviewAgent`). | *(Mòdul de constants)* |
@@ -21,7 +22,7 @@
 | `src.services.llm_service` | [`src/services/llm_service.py`](../../src/services/llm_service.py) | Servei de comunicació resilient amb l'API de Google Gemini. | `LLMService` |
 | `src.utils.changelog_updater` | [`src/utils/changelog_updater.py`](../../src/utils/changelog_updater.py) | Mòdul d'automatització i validació per mantenir actualitzat el fitxer CHANGELOG.md. | `classify_commit_message`, `group_commits_by_category`, `update_changelog_content`, `release_unreleased_content`, `get_recent_git_commits`, `update_changelog_file`, `main` |
 | `src.utils.config` | [`src/utils/config.py`](../../src/utils/config.py) | Mòdul de configuració i càrrega segura de variables d'entorn. | `AppConfig`, `parse_repo_list` |
-| `src.utils.doc_updater` | [`src/utils/doc_updater.py`](../../src/utils/doc_updater.py) | Mòdul d'automatització per mantenir la documentació tècnica sincronitzada amb el codi font. | `ModuleDocInfo`, `AdrEntry`, `inspect_python_module`, `scan_source_modules`, `validate_docstrings_and_types`, `generate_reference_markdown`, `extract_adr_metadata`, `build_adr_index_table`, `sync_adr_index`, `update_all_documentation`, `main` |
+| `src.utils.doc_updater` | [`src/utils/doc_updater.py`](../../src/utils/doc_updater.py) | Motor d'actualització i verificació automàtica de la documentació tècnica (Docs-as-Code). | `ModuleDocInfo`, `AdrEntry`, `inspect_python_module`, `scan_source_modules`, `validate_docstrings_and_types`, `generate_reference_markdown`, `extract_adr_metadata`, `build_adr_index_table`, `sync_adr_index`, `update_all_documentation`, `main` |
 | `src.utils.github_templates` | [`src/utils/github_templates.py`](../../src/utils/github_templates.py) | Utilitats per a la càrrega i renderització de les plantilles de GitHub (`.github/`). | `strip_yaml_frontmatter`, `load_github_template`, `render_pull_request_body`, `render_improvement_issue_body` |
 | `src.utils.json_parser` | [`src/utils/json_parser.py`](../../src/utils/json_parser.py) | Utilitats centralitzades per a l'extracció, reparació i normalització de respostes JSON/YAML del LLM. | `clean_markdown_fences`, `replace_triple_quoted_strings`, `extract_json_object_bounds`, `sanitize_invalid_escapes`, `normalize_developer_files`, `parse_developer_json_response`, `parse_generic_json_response` |
 | `src.utils.logger` | [`src/utils/logger.py`](../../src/utils/logger.py) | Mòdul centralitzat de registre i rotació de logs d'auditoria per als agents. | `JSONFormatter`, `AgentLogger`, `StructuredAgentAdapter` |
@@ -64,6 +65,13 @@
 - **Resum:** Punt d'entrada de la interfície de línia d'ordres (CLI) per a l'Agent d'IA multi-repositori.
 
 ::: src.main
+
+### `src.password_reset`
+
+- **Fitxer font:** [`src/password_reset.py`](../../src/password_reset.py)
+- **Resum:** Mòdul per a la gestió segura del restabliment de contrasenyes.
+
+::: src.password_reset
 
 ### `src.prompts.analyst_prompts`
 
@@ -124,7 +132,7 @@
 ### `src.utils.doc_updater`
 
 - **Fitxer font:** [`src/utils/doc_updater.py`](../../src/utils/doc_updater.py)
-- **Resum:** Mòdul d'automatització per mantenir la documentació tècnica sincronitzada amb el codi font.
+- **Resum:** Motor d'actualització i verificació automàtica de la documentació tècnica (Docs-as-Code).
 
 ::: src.utils.doc_updater
 
