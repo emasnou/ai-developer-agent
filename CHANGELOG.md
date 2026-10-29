@@ -24,6 +24,8 @@ El format es basa en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) i 
 - **issue-35**: Resolució Issue #35 (Implementat el sanejament d'entrades per prevenir Log Injection (CWE-117) al registre d'auditoria de restabliment de contrasenyes.)
 - **issue-46**: Resolució Issue #46 (Encapsulació del payload serialitzat a AnalyticsQuery mitjançant PrivateAttr per garantir concurrència thread-safe a AnalyticsAgent)
 - **issue-50**: Resolució Issue #50 (Configuració de DEFAULT_MAX_RECORDS_LIMIT com a valor per defecte a MetricsTracker.__init__ per prevenir riscos de memòria no acotada (OWASP A04))
+- **issue-36**: Resolució Issue #36 (Ajustada la longitud de línia dels missatges de logging a src/password_reset.py per complir estrictament el llindar de 100 caràcters de PEP 8 i Ruff, i actualitzats els tests a tests/unit/test_password_reset_logging.py.)
+- **issue-38**: Resolució Issue #38 (Afegida protecció de multithreading mitjançant threading.Lock a AgentLogger.reset() i AgentLogger.get_logger() a src/utils/logger.py, i creats tests unitaris de concurrència a tests/unit/test_logger.py.)
 
 ### Changed
 - **Sincronització Documental Autònoma al `DeveloperAgent` (`src/agents/developer_agent.py`)**: Integració de `_sync_workspace_documentation` per actualitzar `docs/reference/index.md` i `docs/adr/README.md` automàticament a cada commit d'Issue o remediació de PR.

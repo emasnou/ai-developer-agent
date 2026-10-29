@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# bin/ai-metrics — Visualitzador i Gestor de Telemetria FinOps i Eficiència
+# Mostra l'informe acumulat de tokens consumits, costos en USD per model,
+# latències, velocitat de generació (TPS) i el catàleg de tarifes FinOps.
+# ==============================================================================
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+
+METRICS_FILE=""
+MODEL_FILTER=""
+LAST_CALLS="10"
+OUTPUT_JSON=false
+SHOW_CATALOG=false
+RESET_METRICS=false
+
+usage() {
+    cat <<EOF
+📊 Ús: $(basename "$0") [OPCIONS]
+
+Visualitza i gestiona les mètriques de telemetria de tokens, costos (FinOps)
+i ràtios d'eficiència (TPS / latència) enregistrades per MetricsTracker.
+
+Opcions:
+  -f, --file <ruta>               Fitxer JSONL de mètriques a consultar (per defecte: logs/metrics.jsonl).
+  -m, --model <model>             Filtra les mètriques per nom de model LLM (ex: gemini-3.8-flash).
+  -n, --last <N>                  Nombre de darreres crides individuals a mostrar (per defecte: 10, 0 per ometre).
+  -j, --json                      Exporta l'informe complet (resum + crides) en format JSON estructurat.
+  -c, --catalog                   Mostra la taula del catàleg de tarifes FinOps (USD / 1k tokens) i surt.
+      --reset                     Reinicia (esborra) l'històric de mètriques acumulat a disc.
+  -h, --help                      Mostra aquesta ajuda i surt.
+
+Exemples:
+  $(basename "$0")
+  $(basename "$0") --last 20
+  $(basename "$0") --model gemini-3.8-flash
+  $(basename "$0") --json
+  $(basename "$0") --catalog
+  $(basename "$0") --reset
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f|--file)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar la ruta del fitxer per a $1."; exit 1; }
+            METRICS_FILE="$2"
+            shift 2
+            ;;
+        -m|--model)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar el nom del model per a $1."; exit 1; }
+            MODEL_FILTER="$2"
+            shift 2
+            ;;
+        -n|--last)
+            [[ $# -lt 2 ]] && { log_error "Falta indicar el nombre de crides per a $1."; exit 1; }
+            LAST_CALLS="$2"
+            shift 2
+            ;;
+        -j|--json)
+            OUTPUT_JSON=true
+            shift
+            ;;
+        -c|--catalog)
+            SHOW_CATALOG=true
+            shift
+            ;;
+        --reset)
+            RESET_METRICS=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            log_error "Paràmetre desconegut: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+cd "${PROJECT_ROOT}"
+
+ARGS=()
+if [[ -n "${METRICS_FILE}" ]]; then
+    ARGS+=("--file" "${METRICS_FILE}")
+fi
+if [[ -n "${MODEL_FILTER}" ]]; then
+    ARGS+=("--model" "${MODEL_FILTER}")
+fi
+if [[ -n "${LAST_CALLS}" ]]; then
+    ARGS+=("--last" "${LAST_CALLS}")
+fi
+if [[ "${OUTPUT_JSON}" == true ]]; then
+    ARGS+=("--json")
+fi
+if [[ "${SHOW_CATALOG}" == true ]]; then
+    ARGS+=("--catalog")
+fi
+if [[ "${RESET_METRICS}" == true ]]; then
+    ARGS+=("--reset")
+fi
+
+"${PYTHON_BIN}" -m src.services.metrics_tracker "${ARGS[@]}"
+

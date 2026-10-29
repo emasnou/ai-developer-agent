@@ -7,7 +7,12 @@ from src.services.finops_service import (
 )
 from src.services.github_service import GitHubService, validate_repo_name
 from src.services.llm_service import LLMService
-from src.services.metrics_tracker import CallTrackingContext, MetricsTracker
+from src.services.metrics_tracker import (
+    DEFAULT_METRICS_FILE,
+    CallTrackingContext,
+    MetricsTracker,
+    format_pricing_catalog_table,
+)
 
 __all__ = [
     "GitHubService",
@@ -18,4 +23,6 @@ __all__ = [
     "ModelPricingNotFoundError",
     "MetricsTracker",
     "CallTrackingContext",
+    "DEFAULT_METRICS_FILE",
+    "format_pricing_catalog_table",
 ]

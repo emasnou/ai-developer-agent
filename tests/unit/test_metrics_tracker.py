@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
 from src.schemas.finops_schemas import TokenUsage
-from src.services.finops_service import CostCalculator
-from src.services.metrics_tracker import CallTrackingContext, MetricsTracker
+from src.services.finops_service import CostCalculator, FinOpsPricingCatalog
+from src.services.llm_service import LLMService
+from src.services.metrics_tracker import (
+    CallTrackingContext,
+    MetricsTracker,
+    format_pricing_catalog_table,
+    main,
+)
 
 
 def test_metrics_tracker_initialization() -> None:
@@ -133,3 +142,133 @@ def test_tracker_reset() -> None:
     tracker.reset()
     assert len(tracker.records) == 0
     assert tracker.get_summary().total_calls == 0
+
+
+def test_pricing_catalog_supports_active_gemini_3_models() -> None:
+    """Verifica que el catàleg per defecte inclogui gemini-3.8-flash i gemini-3.5-flash-lite."""
+    catalog = FinOpsPricingCatalog()
+    assert catalog.has_tier("gemini-3.8-flash")
+    assert catalog.has_tier("gemini-3.5-flash-lite")
+    assert len(catalog.list_tiers()) >= 7
+
+    calc = CostCalculator(catalog=catalog)
+    usage = TokenUsage(prompt_tokens=1000, completion_tokens=500, cached_tokens=200)
+    cost_primary = calc.calculate_cost("gemini-3.8-flash", usage)
+    cost_fallback = calc.calculate_cost("gemini-3.5-flash-lite", usage)
+    assert cost_primary.total_cost > cost_fallback.total_cost > 0.0
+
+
+def test_jsonl_persistence_and_model_filtering(tmp_path: Path) -> None:
+    """Verifica l'escriptura i càrrega de registres JSONL amb filtre per model."""
+    metrics_file = tmp_path / "logs" / "metrics.jsonl"
+    tracker = MetricsTracker()
+
+    r1 = tracker.record_call(
+        "gemini-3.8-flash",
+        TokenUsage(prompt_tokens=1200, completion_tokens=300),
+        duration_seconds=1.2,
+    )
+    r2 = tracker.record_call(
+        "gemini-3.5-flash-lite",
+        TokenUsage(prompt_tokens=600, completion_tokens=150),
+        duration_seconds=0.6,
+    )
+    tracker.append_record_to_file(r1, metrics_file)
+    tracker.append_record_to_file(r2, metrics_file)
+
+    loaded_all = MetricsTracker.load_from_file(metrics_file)
+    assert len(loaded_all.records) == 2
+    assert loaded_all.get_summary().total_tokens == 2250
+
+    loaded_filtered = MetricsTracker.load_from_file(metrics_file, model_filter="3.8-flash")
+    assert len(loaded_filtered.records) == 1
+    assert loaded_filtered.records[0].model_name == "gemini-3.8-flash"
+
+
+def test_format_report_and_pricing_catalog_table() -> None:
+    """Verifica el formatat visual de l'informe de telemetria i de la taula de tarifes."""
+    empty_tracker = MetricsTracker()
+    empty_report = empty_tracker.format_report()
+    assert "No s'ha trobat cap registre de telemetria" in empty_report
+
+    tracker = MetricsTracker()
+    tracker.record_call(
+        "gemini-3.8-flash",
+        TokenUsage(prompt_tokens=1000, completion_tokens=500, cached_tokens=100),
+        duration_seconds=1.0,
+    )
+    populated_report = tracker.format_report(last_n=5)
+    assert "RESUM GLOBAL ACUMULAT" in populated_report
+    assert "DESGLOSSAMENT PER MODEL LLM" in populated_report
+    assert "DARRERES 1 CRIDES REGISTRADES" in populated_report
+    assert "gemini-3.8-flash" in populated_report
+
+    catalog_table = format_pricing_catalog_table()
+    assert "CATÀLEG DE TARIFES FINOPS" in catalog_table
+    assert "gemini-3.8-flash" in catalog_table
+    assert "gemini-3.5-flash-lite" in catalog_table
+
+
+def test_metrics_cli_main_options(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Verifica el funcionament de la CLI main() amb --catalog, --json, --file i --reset."""
+    metrics_file = tmp_path / "metrics.jsonl"
+    tracker = MetricsTracker()
+    rec = tracker.record_call(
+        "gemini-3.8-flash",
+        TokenUsage(prompt_tokens=400, completion_tokens=100),
+        duration_seconds=0.5,
+    )
+    tracker.append_record_to_file(rec, metrics_file)
+
+    assert main(["--catalog"]) == 0
+    out_catalog = capsys.readouterr().out
+    assert "CATÀLEG DE TARIFES FINOPS" in out_catalog
+
+    assert main(["--file", str(metrics_file), "--json"]) == 0
+    out_json = json.loads(capsys.readouterr().out)
+    assert out_json["summary"]["total_calls"] == 1
+    assert out_json["summary"]["total_tokens"] == 500
+
+    assert main(["--file", str(metrics_file), "--reset"]) == 0
+    assert not metrics_file.exists()
+
+
+def test_llm_service_extract_token_usage_metadata_and_fallback() -> None:
+    """Verifica l'extracció de tokens des de usage_metadata i l'estimació per caràcters."""
+    fake_response_with_meta = SimpleNamespace(
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=800,
+            candidates_token_count=200,
+            cached_content_token_count=100,
+        )
+    )
+    usage = LLMService._extract_token_usage(
+        response=fake_response_with_meta,
+        prompt="Prompt de prova",
+        system_instruction="Instrucció",
+        output_text="Resposta",
+    )
+    assert usage.prompt_tokens == 800
+    assert usage.completion_tokens == 200
+    assert usage.cached_tokens == 100
+    assert usage.total_tokens == 1000
+
+    fake_response_without_meta = SimpleNamespace(usage_metadata=None)
+    estimated = LLMService._extract_token_usage(
+        response=fake_response_without_meta,
+        prompt="A" * 400,
+        system_instruction="B" * 200,
+        output_text="C" * 120,
+    )
+    assert estimated.prompt_tokens == 150
+    assert estimated.completion_tokens == 30
+    assert estimated.total_tokens == 180
+
+
+def test_bin_ai_metrics_script_exists() -> None:
+    """Verifica que l'script bash bin/ai-metrics existeixi i invoqui src.services.metrics_tracker."""
+    script_path = Path(__file__).resolve().parents[2] / "bin" / "ai-metrics"
+    assert script_path.exists()
+    content = script_path.read_text(encoding="utf-8")
+    assert "_common.sh" in content
+    assert "src.services.metrics_tracker" in content

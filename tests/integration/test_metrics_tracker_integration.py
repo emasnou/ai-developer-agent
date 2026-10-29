@@ -83,11 +83,11 @@ def test_metrics_tracker_invalid_purge_count_raises_value_error() -> None:
 
 
 def test_metrics_tracker_unlimited_default_preserves_all_records() -> None:
-    """Comprova que sense max_records es conserva el comportament històric il·limitat."""
-    tracker = MetricsTracker()
+    """Comprova que amb max_records=None es conserva el comportament històric il·limitat."""
+    tracker = MetricsTracker(max_records=None)
     assert tracker.max_records is None
 
-    for i in range(1, 10):
+    for _i in range(1, 10):
         usage = TokenUsage(prompt_tokens=10, completion_tokens=10)
         tracker.record_call(model_name="gemini-2.5-flash", usage=usage, duration_seconds=0.1)
 

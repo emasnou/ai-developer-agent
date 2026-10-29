@@ -12,6 +12,18 @@ from src.schemas.finops_schemas import CostBreakdown, PricingTier, TokenUsage
 from src.utils.logger import AgentLogger, StructuredAgentAdapter
 
 DEFAULT_PRICING_CATALOG: dict[str, dict[str, Any]] = {
+    "gemini-3.8-flash": {
+        "provider": "google",
+        "input_cost_per_k": 0.000075,
+        "output_cost_per_k": 0.0003,
+        "cached_cost_per_k": 0.00001875,
+    },
+    "gemini-3.5-flash-lite": {
+        "provider": "google",
+        "input_cost_per_k": 0.0000375,
+        "output_cost_per_k": 0.00015,
+        "cached_cost_per_k": 0.000009375,
+    },
     "gemini-2.5-flash": {
         "provider": "google",
         "input_cost_per_k": 0.000075,
@@ -123,6 +135,14 @@ class FinOpsPricingCatalog:
             bool: True si el model està registrat, False altrament.
         """
         return model_name.strip().lower() in self._catalog
+
+    def list_tiers(self) -> list[PricingTier]:
+        """Retorna la llista de totes les tarifes registrades al catàleg.
+
+        Returns:
+            list[PricingTier]: Llista ordenada de tarifes de preus disponibles.
+        """
+        return list(self._catalog.values())
 
     @classmethod
     def from_file(cls, file_path: Path | str) -> FinOpsPricingCatalog:

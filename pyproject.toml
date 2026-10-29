@@ -38,6 +38,7 @@ docs = [
 ai-agent = "src.main:main"
 ai-changelog = "src.utils.changelog_updater:main"
 ai-docs = "src.utils.doc_updater:main"
+ai-metrics = "src.services.metrics_tracker:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
