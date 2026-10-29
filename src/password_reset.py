@@ -4,7 +4,8 @@ Aquest mòdul implementa la generació de tokens signats amb HMAC-SHA256, protec
 contra atacs de canal lateral (timing attacks), mitigació d'enumeració d'usuaris,
 validació estricta d'entrades (OWASP Top 10), persistència de claus mitjançant derivació
 segura scrypt, neteja controlada de memòria contra DoS, consum atòmic contra TOCTOU,
-limitació de taxa thread-safe i compliment estricte de les directrius NIST i OWASP.
+limitació de taxa thread-safe, registre de logs estructurats per a sistemes SIEM
+i compliment estricte de les directrius NIST i OWASP.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -21,6 +23,8 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from src.utils.logger import AgentLogger, StructuredAgentAdapter
 
 GENERIC_SUCCESS_MESSAGE: str = (
     "Si el correu està registrat, rebràs instruccions per restablir la contrasenya"
@@ -112,8 +116,11 @@ class ResetTokenData:
 class PasswordResetTokenManager:
     """Genera, valida, invalida i purga tokens criptogràfics segurs amb expiració fixa."""
 
-    def __init__(
-        self, secret_key: Optional[str] = None, expiration_minutes: int = 15
+    def __init__(    
+        self,
+        secret_key: Optional[str] = None,
+        expiration_minutes: int = 15,
+        logger: Optional[logging.Logger | StructuredAgentAdapter] = None,
     ) -> None:
         """Inicialitza el gestor de tokens.
 
@@ -121,6 +128,7 @@ class PasswordResetTokenManager:
             secret_key: Clau secreta robusta (mínim 32 caràcters). Si és None,
                 s'intenta llegir de la variable d'entorn APP_SECRET_KEY.
             expiration_minutes: Minuts de validesa del token (per defecte: 15).
+            logger: Instància opcional de logger per auditar esdeveniments de seguretat.
 
         Raises:
             ValueError: Si no es proporciona una clau vàlida d'almenys 32 caràcters.
@@ -136,6 +144,11 @@ class PasswordResetTokenManager:
         self._revoked_tokens: Dict[str, int] = {}
         self._lock: threading.Lock = threading.Lock()
         self._last_purge_time: float = 0.0
+        if logger is not None:
+            self.logger: logging.Logger | StructuredAgentAdapter = logger
+        else:
+            base_logger = AgentLogger.get_logger("PasswordResetTokenManager")
+            self.logger = StructuredAgentAdapter(base_logger, "PasswordResetTokenManager")
 
     @staticmethod
     def _b64_encode(data: bytes) -> str:
@@ -202,6 +215,7 @@ class PasswordResetTokenManager:
         sig = hmac.new(self._secret_key, payload_b64.encode("utf-8"), hashlib.sha256).digest()
         token_str = f"{payload_b64}.{self._b64_encode(sig)}"
 
+        self.logger.info(f"[SIEM_AUDIT] Token de restabliment generat per al correu: {email}")
         return ResetTokenData(
             token=token_str,
             email=email,
@@ -268,6 +282,7 @@ class PasswordResetTokenManager:
         with self._lock:
             self._revoked_tokens[token_hash] = exp_ts
             self._maybe_auto_purge(now_ts)
+        self.logger.info("[SIEM_AUDIT] Token revocat satisfactòriament.")
 
     def is_token_revoked(self, token: str, now: Optional[datetime] = None) -> bool:
         """Comprova si el token ha estat revocat o consumit prèviament.
@@ -307,10 +322,12 @@ class PasswordResetTokenManager:
             InvalidTokenError: Si el format, signatura o dades són incorrectes.
         """
         if not token or not isinstance(token, str) or "." not in token:
+            self.logger.warning("[SECURITY_EVENT] Format de token invàlid o incomplet detectat.")
             raise InvalidTokenError("Format de token incorrecte o incomplet.")
 
         parts = token.split(".")
         if len(parts) != 2:
+            self.logger.warning("[SECURITY_EVENT] Token amb nombre de segments invàlid.")
             raise InvalidTokenError("Format de token incorrecte.")
 
         payload_b64, signature_b64 = parts[0], parts[1]
@@ -323,6 +340,7 @@ class PasswordResetTokenManager:
             actual_sig = self._b64_decode(signature_b64)
             # Usem compare_digest en temps constant per mitigar atacs de canal lateral (OWASP A07)
             if not hmac.compare_digest(expected_sig, actual_sig):
+                self.logger.warning("[SECURITY_EVENT] Signatura HMAC incorrecta: token manipulat.")
                 raise InvalidTokenError("La signatura del token ha estat manipulada o és invàlida.")
 
             payload_bytes = self._b64_decode(payload_b64)
@@ -330,6 +348,7 @@ class PasswordResetTokenManager:
         except InvalidTokenError:
             raise
         except Exception as exc:
+            self.logger.warning(f"[SECURITY_EVENT] Error de desxiframent o format del token: {exc}")
             raise InvalidTokenError("No s'ha pogut desxifrar o interpretar el token.") from exc
 
     def _check_validity_unlocked(self, token: str, now: Optional[datetime] = None) -> str:
@@ -357,15 +376,18 @@ class PasswordResetTokenManager:
         exp_revoked = self._revoked_tokens.get(token_hash)
         if exp_revoked is not None:
             if exp_revoked > now_ts:
+                self.logger.warning("[SECURITY_EVENT] Intent d'ús d'un token ja revocat (Replay Attack).")
                 raise InvalidTokenError("El token ja ha estat utilitzat anteriorment.")
             del self._revoked_tokens[token_hash]
 
         exp_timestamp = payload.get("exp")
         email = payload.get("email")
         if not exp_timestamp or not email:
+            self.logger.warning("[SECURITY_EVENT] Token amb dades incompletes de càrrega útil.")
             raise InvalidTokenError("Dades del token incompletes.")
 
         if now_ts > exp_timestamp:
+            self.logger.warning(f"[SECURITY_EVENT] Intent de validació de token expirat per a: {email}")
             raise ExpiredTokenError("L'enllaç ha expirat.")
 
         return email
@@ -417,6 +439,7 @@ class PasswordResetTokenManager:
             token_hash = self._token_fingerprint(token)
             self._revoked_tokens[token_hash] = exp_ts
             self._maybe_auto_purge(now_ts)
+            self.logger.info(f"[SIEM_AUDIT] Token consumit correctament per a: {email}")
             return email
 
     def validate_token(
@@ -612,18 +635,29 @@ class EmailService:
 class RateLimiter:
     """Limitador de taxa thread-safe basat en finestres lliscants i gestió eficient de memòria."""
 
-    def __init__(self, max_requests: int = 5, window_seconds: int = 300) -> None:
+    def __init__(
+        self,
+        max_requests: int = 5,
+        window_seconds: int = 300,
+        logger: Optional[logging.Logger | StructuredAgentAdapter] = None,
+    ) -> None:
         """Inicialitza el limitador de taxa.
 
         Args:
             max_requests: Nombre màxim de peticions permeses dins la finestra.
             window_seconds: Mida de la finestra de temps en segons.
+            logger: Instància opcional de logger per a esdeveniments de seguretat.
         """
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self._history: Dict[str, List[float]] = {}
         self._lock: threading.Lock = threading.Lock()
         self._last_global_purge: float = 0.0
+        if logger is not None:
+            self.logger: logging.Logger | StructuredAgentAdapter = logger
+        else:
+            base_logger = AgentLogger.get_logger("RateLimiter")
+            self.logger = StructuredAgentAdapter(base_logger, "RateLimiter")
 
     def purge_empty_keys(self, now: Optional[float] = None) -> None:
         """Elimina les claus que ja no tenen cap petició vigent dins la finestra.
@@ -663,6 +697,9 @@ class RateLimiter:
 
             if len(valid_records) >= self.max_requests:
                 self._history[identifier] = valid_records
+                self.logger.warning(
+                    f"[SECURITY_EVENT] Rate limit activat per a: '{identifier}'. Petició denegada."
+                )
                 return False
 
             valid_records.append(now)
@@ -691,6 +728,7 @@ class PasswordResetController:
         rate_limiter: Optional[RateLimiter] = None,
         ip_rate_limiter: Optional[RateLimiter] = None,
         background_task_runner: Optional[Callable[[Callable[[], None]], None]] = None,
+        logger: Optional[logging.Logger | StructuredAgentAdapter] = None,
     ) -> None:
         """Inicialitza el controlador de restabliment.
 
@@ -702,6 +740,7 @@ class PasswordResetController:
             rate_limiter: Limitador de peticions per correu electrònic.
             ip_rate_limiter: Limitador de peticions per adreça IP d'origen (OWASP A07).
             background_task_runner: Executor asíncron per a tasques d'I/O en segon pla.
+            logger: Instància opcional de logger per a esdeveniments de seguretat.
         """
         self.user_repo = user_repository
         self.email_service = email_service
@@ -710,6 +749,11 @@ class PasswordResetController:
         self.rate_limiter = rate_limiter or RateLimiter()
         self.ip_rate_limiter = ip_rate_limiter or RateLimiter(max_requests=20, window_seconds=300)
         self._background_task_runner = background_task_runner
+        if logger is not None:
+            self.logger: logging.Logger | StructuredAgentAdapter = logger
+        else:
+            base_logger = AgentLogger.get_logger("PasswordResetController")
+            self.logger = StructuredAgentAdapter(base_logger, "PasswordResetController")
 
     def _dispatch_task(self, task: Callable[[], None]) -> None:
         """Executa una tasca en segon pla per mitigar timing attacks d'I/O.
@@ -737,12 +781,18 @@ class PasswordResetController:
             Optional[Dict[str, Any]]: Resposta d'error 429 si se superen límits, None si és admesa.
         """
         if ip_address and not self.ip_rate_limiter.is_allowed(ip_address, current_timestamp=timestamp):
+            self.logger.warning(
+                f"[SECURITY_EVENT] Rate limit per IP assolit per a la IP: {ip_address}"
+            )
             return {
                 "status_code": 429,
                 "error": "Massa peticions des d'aquesta IP",
                 "message": "S'ha superat el límit de peticions permès per a la vostra adreça IP.",
             }
         if not self.rate_limiter.is_allowed(email, current_timestamp=timestamp):
+            self.logger.warning(
+                f"[SECURITY_EVENT] Rate limit per compte assolit per al correu: {email}"
+            )
             return {
                 "status_code": 429,
                 "error": "Massa peticions",
@@ -751,7 +801,7 @@ class PasswordResetController:
         return None
 
     def request_password_reset(
-        self,
+        self, 
         email: str,
         ip_address: Optional[str] = None,
         now: Optional[datetime] = None,
@@ -767,6 +817,7 @@ class PasswordResetController:
             Dict[str, Any]: Resposta estàndard en format diccionari.
         """
         if not validate_email_format(email):
+            self.logger.warning(f"[SECURITY_EVENT] Intent de sol·licitud amb format de correu invàlid: {email}")
             return {
                 "status_code": 400,
                 "error": "Format de correu invàlid",
@@ -788,6 +839,11 @@ class PasswordResetController:
             self._dispatch_task(
                 lambda: self.email_service.send_reset_email(normalized_email, reset_link)
             )
+            self.logger.info(f"[SIEM_AUDIT] Correu de restabliment enviat a: {normalized_email}")
+        else:
+            self.logger.info(
+                f"[SIEM_AUDIT] Sol·licitud per a compte no existent mitiga enumeració: {normalized_email}"
+            )
 
         return {
             "status_code": 200,
@@ -806,12 +862,14 @@ class PasswordResetController:
         """
         try:
             self.token_manager.verify_token(token, now=now)
+            self.logger.info("[SIEM_AUDIT] Accés concedit al formulari de restabliment amb token vàlid.")
             return {
                 "status_code": 200,
                 "can_reset": True,
                 "message": "Accés concedit al formulari de nova contrasenya.",
             }
         except ExpiredTokenError:
+            self.logger.warning("[SECURITY_EVENT] Accés al formulari denegat: token expirat.")
             return {
                 "status_code": 400,
                 "can_reset": False,
@@ -820,6 +878,7 @@ class PasswordResetController:
                 "message": "L'enllaç per restablir la contrasenya ha expirat. Podeu sol·licitar-ne un de nou.",
             }
         except InvalidTokenError:
+            self.logger.warning("[SECURITY_EVENT] Accés al formulari denegat: token invàlid o manipulat.")
             return {
                 "status_code": 400,
                 "can_reset": False,
@@ -842,6 +901,7 @@ class PasswordResetController:
             Dict[str, Any]: Resposta de la petició de canvi de contrasenya.
         """
         if not validate_password_complexity(new_password):
+            self.logger.warning("[SECURITY_EVENT] Intent de restabliment amb contrasenya feble que no compleix requisits.")
             return {
                 "status_code": 400,
                 "error": "Contrasenya feble o no vàlida",
@@ -854,6 +914,7 @@ class PasswordResetController:
         try:
             email = self.token_manager.consume_token(token, now=now)
         except TokenValidationError as err:
+            self.logger.warning(f"[SECURITY_EVENT] Error de validació en consum de token: {err}")
             return {
                 "status_code": 400,
                 "error": str(err),
@@ -862,12 +923,14 @@ class PasswordResetController:
 
         updated = self.user_repo.update_password(email, new_password)
         if not updated:
+            self.logger.warning(f"[SECURITY_EVENT] Intent de restabliment per a usuari no existent a la BD: {email}")
             return {
                 "status_code": 404,
                 "error": "Usuari no trobat",
                 "message": "No s'ha trobat cap compte d'usuari vinculat al correu del token.",
             }
 
+        self.logger.info(f"[SIEM_AUDIT] Contrasenya restablerta amb èxit per a l'usuari: {email}")
         return {
             "status_code": 200,
             "message": "Contrasenya actualitzada correctament.",
