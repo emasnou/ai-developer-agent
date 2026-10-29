@@ -8,6 +8,7 @@ from src.agents.analyst_agent import AnalystAgent
 from src.agents.code_review_agent import CodeReviewAgent
 from src.agents.developer_agent import DeveloperAgent
 from src.services.github_service import GitHubService
+from src.utils.config import GITHUB_REPO
 
 
 def _prompt_non_empty(prompt_text: str, empty_warning: str) -> str:
@@ -41,7 +42,7 @@ def _get_or_init_github_service(
     """
     if github_service is not None:
         return github_service
-    return GitHubService(require_repo=require_repo)
+    return GitHubService(repo_name=GITHUB_REPO, require_repo=require_repo)
 
 
 def _ensure_active_repository(github_service: GitHubService) -> bool:
@@ -327,7 +328,7 @@ def main(github_service: Optional[GitHubService] = None) -> None:
     service: Optional[GitHubService] = github_service
     if service is None:
         try:
-            service = GitHubService(require_repo=False)
+            service = GitHubService(repo_name=GITHUB_REPO, require_repo=False)
         except Exception as e:
             print(f"⚠️ Avís d'inicialització de GitHub: {e}")
 

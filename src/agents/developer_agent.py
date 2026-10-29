@@ -25,7 +25,13 @@ from src.utils.doc_updater import update_all_documentation
 from src.utils.github_templates import render_pull_request_body
 from src.utils.json_parser import parse_developer_json_response
 
-_SENSITIVE_ENV_VARS: tuple[str, ...] = ("GITHUB_TOKEN", "GEMINI_API_KEY", "OPENAI_API_KEY")
+_SENSITIVE_ENV_VARS: tuple[str, ...] = (
+    "GITHUB_TOKEN",
+    "GITHUB_REPO",
+    "GITHUB_REPOS",
+    "GEMINI_API_KEY",
+    "OPENAI_API_KEY",
+)
 _WORKSPACE_IGNORED_ITEMS: set[str] = {
     ".git",
     "__pycache__",
@@ -236,6 +242,71 @@ class DeveloperAgent(BaseAgent):
 
         return "\n".join(contents) if contents else "Cap fitxer trobat al workspace"
 
+    @staticmethod
+    def _repair_python_syntax_typos(content: str) -> str:
+        """Repara errors tipogràfics freqüents del LLM en diccionaris Python si `ast.parse` falla.
+
+        Corrigeix patrons com `"key=""value",` o `"key": ""value",` generats accidentalment
+        dins de literals de diccionari quan el model omet els dos punts (`:`).
+
+        Args:
+            content: Codi font Python original amb error de sintaxi.
+
+        Returns:
+            str: Codi font reparat si passa `ast.parse`, o el contingut original altrament.
+        """
+        repaired = re.sub(
+            r'"([A-Za-z_][A-Za-z0-9_.-]*)=?"\s*"([^"\n]*)"(\s*[,}\n])',
+            r'"\1": "\2"\3',
+            content,
+        )
+        repaired = re.sub(
+            r'("[A-Za-z_][A-Za-z0-9_.-]*"\s*:\s*)""([^"\n]*)"(\s*[,}\n])',
+            r'\1"\2"\3',
+            repaired,
+        )
+        if repaired != content:
+            try:
+                ast.parse(repaired)
+                return repaired
+            except SyntaxError:
+                pass
+        return content
+
+    @staticmethod
+    def _collect_python_syntax_errors(
+        files_list: list[dict[str, Any]], workspace_dir: Path
+    ) -> str:
+        """Comprova si algun fitxer Python generat conté errors de sintaxi abans d'executar PyTest.
+
+        Args:
+            files_list: Llista de fitxers generats pel LLM.
+            workspace_dir: Ruta del workspace local.
+
+        Returns:
+            str: Detall dels errors de sintaxi trobats o cadena buida si tot és vàlid.
+        """
+        errors: list[str] = []
+        for file_item in files_list:
+            rel_path = file_item.get("path", "")
+            if not rel_path.endswith(".py"):
+                continue
+            target_path = workspace_dir / rel_path
+            source = (
+                target_path.read_text(encoding="utf-8")
+                if target_path.exists()
+                else file_item.get("content", "")
+            )
+            try:
+                ast.parse(source, filename=rel_path)
+            except SyntaxError as exc:
+                line_text = (exc.text or "").strip()
+                errors.append(
+                    f"SyntaxError a {rel_path} (línia {exc.lineno}): {exc.msg}\n"
+                    f"  Línia conflictiva: {line_text}"
+                )
+        return "\n".join(errors)
+
     def _write_files_to_workspace(
         self, files_list: list[dict[str, Any]], workspace_dir: Path
     ) -> list[Path]:
@@ -266,7 +337,17 @@ class DeveloperAgent(BaseAgent):
                 try:
                     ast.parse(content)
                 except SyntaxError as e:
-                    self.logger.warning(f"Alerta de sintaxi/indentació a {file_item['path']}: {e}")
+                    repaired = self._repair_python_syntax_typos(content)
+                    if repaired != content:
+                        content = repaired
+                        file_item["content"] = repaired
+                        self.logger.info(
+                            f"Reparada automàticament errada tipogràfica de sintaxi a {file_item['path']}."
+                        )
+                    else:
+                        self.logger.warning(
+                            f"Alerta de sintaxi/indentació a {file_item['path']}: {e}"
+                        )
 
             target_path.write_text(content, encoding="utf-8")
             saved_paths.append(target_path)
@@ -657,6 +738,14 @@ class DeveloperAgent(BaseAgent):
             return {"success": False, "attempts": 0}
 
         self._write_files_to_workspace(files_data, workspace_dir)
+        syntax_errors = self._collect_python_syntax_errors(files_data, workspace_dir)
+        if syntax_errors:
+            self.logger.warning(
+                f"Detectats errors de sintaxi AST abans d'executar PyTest; aplicant auto-correcció prèvia:\n{syntax_errors}"
+            )
+            files_data = self._request_surgical_fix(
+                files_data, syntax_errors, system_prompt, workspace_dir
+            )
         env = self._build_workspace_env(workspace_dir)
 
         for attempt in range(1, max_retries + 1):

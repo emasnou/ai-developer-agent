@@ -129,14 +129,31 @@ def test_developer_agent_workspace_env_strips_secrets(
         monkeypatch: Fixture de PyTest per modificar variables d'entorn de forma aïllada.
     """
     monkeypatch.setenv("GITHUB_TOKEN", "secret_gh_token")
+    monkeypatch.setenv("GITHUB_REPO", "org/host-repo")
+    monkeypatch.setenv("GITHUB_REPOS", "org/host-repo-1,org/host-repo-2")
     monkeypatch.setenv("GEMINI_API_KEY", "secret_gemini_key")
     monkeypatch.setenv("PYTHONPATH", "/host/contaminated/path")
     monkeypatch.setenv("SAFE_VAR", "safe_value")
 
     env = DeveloperAgent._build_workspace_env(tmp_path)
     assert "GITHUB_TOKEN" not in env
+    assert "GITHUB_REPO" not in env
+    assert "GITHUB_REPOS" not in env
     assert "GEMINI_API_KEY" not in env
     assert env.get("SAFE_VAR") == "safe_value"
     assert "/host/contaminated/path" not in env.get("PYTHONPATH", "")
     assert str(tmp_path.resolve()) in env.get("PYTHONPATH", "")
     assert str((tmp_path / "src").resolve()) in env.get("PYTHONPATH", "")
+
+
+def test_developer_agent_repairs_python_dict_syntax_typos() -> None:
+    """Verifica que _repair_python_syntax_typos repara errades tipogràfiques del LLM en diccionaris."""
+    broken_source = (
+        "def build_payload():\n"
+        "    return {\n"
+        '        "title": "ADR",\n'
+        '        "owasp_impact=""OWASP A04 - Disseny Insegur",\n'
+        "    }\n"
+    )
+    repaired = DeveloperAgent._repair_python_syntax_typos(broken_source)
+    assert '"owasp_impact": "OWASP A04 - Disseny Insegur",' in repaired

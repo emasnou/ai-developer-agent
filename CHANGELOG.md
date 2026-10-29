@@ -20,6 +20,7 @@ El format es basa en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) i 
 
 ### Fixed
 - Moficació invàlida
+- Error de repetició de les proves de QA
 
 ---
 

@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 from github import Github, GithubException
 
-from src.utils.config import AppConfig
+from src.utils.config import GITHUB_REPO, GITHUB_REPOS, GITHUB_TOKEN
 from src.utils.logger import AgentLogger, StructuredAgentAdapter
 
 REPO_NAME_REGEX: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
@@ -55,18 +55,22 @@ class GitHubService:
             ValueError: Si falta GITHUB_TOKEN o si `require_repo` és True i no hi ha repositori.
             GithubException: Si falla la connexió amb el repositori de GitHub.
         """
-        cfg = AppConfig.from_env()
-        resolved_token = token or cfg.github_token
-        resolved_repo = repo_name if repo_name is not None else cfg.github_repo
+        resolved_token = token or GITHUB_TOKEN
+        if repo_name is not None:
+            resolved_repo: Optional[str] = repo_name.strip() if repo_name.strip() else None
+        elif require_repo:
+            resolved_repo = GITHUB_REPO.strip() if GITHUB_REPO and GITHUB_REPO.strip() else None
+        else:
+            resolved_repo = None
 
         if not resolved_token and client is None:
             raise ValueError("Falta la variable GITHUB_TOKEN al fitxer .env")
 
         base_logger = AgentLogger.get_logger("GitHubService")
         self.logger = StructuredAgentAdapter(base_logger, "GitHubService")
-        self._configured_repos: tuple[str, ...] = cfg.github_repos
+        self._configured_repos: tuple[str, ...] = tuple(GITHUB_REPOS)
         self.client: Any = client if client is not None else Github(resolved_token)
-        self.repo: Optional[Any] = None
+        self._repo: Optional[Any] = None
         self._active_repo_name: Optional[str] = None
 
         if resolved_repo:
@@ -75,14 +79,39 @@ class GitHubService:
             raise ValueError("Falta la variable GITHUB_REPO al fitxer .env o seleccionar un repositori")
 
     @property
+    def repo(self) -> Any:
+        """Retorna l'objecte Repository de PyGithub associat al repositori actiu.
+
+        Returns:
+            Any: Objecte Repository actiu.
+
+        Raises:
+            ValueError: Si no hi ha cap repositori actiu seleccionat.
+        """
+        if self._repo is None:
+            raise ValueError(
+                "No hi ha cap repositori actiu seleccionat sobre el qual treballar."
+            )
+        return self._repo
+
+    @repo.setter
+    def repo(self, value: Optional[Any]) -> None:
+        """Assigna l'objecte Repository actiu (útil per a tests i injecció de mocks).
+
+        Args:
+            value: Instància de Repository o None.
+        """
+        self._repo = value
+
+    @property
     def active_repo_name(self) -> Optional[str]:
         """Retorna el nom complet ('propietari/nom') del repositori actiu actual.
 
         Returns:
             Optional[str]: Nom del repositori actiu o None si no se n'ha seleccionat cap.
         """
-        if self.repo is not None:
-            return getattr(self.repo, "full_name", self._active_repo_name)
+        if self._repo is not None:
+            return getattr(self._repo, "full_name", self._active_repo_name)
         return self._active_repo_name
 
     def _require_active_repo(self) -> Any:
@@ -94,8 +123,6 @@ class GitHubService:
         Raises:
             ValueError: Si no hi ha cap repositori actiu seleccionat.
         """
-        if self.repo is None:
-            raise ValueError("No s'ha seleccionat cap repositori de GitHub sobre el qual treballar.")
         return self.repo
 
     def set_active_repository(self, repo_name: str) -> str:
@@ -118,8 +145,8 @@ class GitHubService:
             )
 
         try:
-            self.repo = self.client.get_repo(cleaned_name)
-            self._active_repo_name = getattr(self.repo, "full_name", cleaned_name)
+            self._repo = self.client.get_repo(cleaned_name)
+            self._active_repo_name = getattr(self._repo, "full_name", cleaned_name)
             self.logger.info(f"Connectat correctament al repositori: {self._active_repo_name}")
             print(f"Connectat correctament al repositori: {self._active_repo_name}")
             return str(self._active_repo_name)
@@ -140,7 +167,10 @@ class GitHubService:
         Returns:
             list[str]: Llista de noms complets ('propietari/nom') sense duplicats.
         """
-        repos: list[str] = [r for r in self._configured_repos if validate_repo_name(r)]
+        repos: list[str] = []
+        for candidate in (*GITHUB_REPOS, *self._configured_repos):
+            if validate_repo_name(candidate) and candidate not in repos:
+                repos.append(candidate)
         if self.active_repo_name and self.active_repo_name not in repos:
             repos.insert(0, self.active_repo_name)
 
