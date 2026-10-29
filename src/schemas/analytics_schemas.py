@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 
 
 class AnalyticsMetric(BaseModel):
@@ -42,6 +42,7 @@ class AnalyticsQuery(BaseModel):
         description="Dades estructurades a analitzar (diccionari de registres o llista de dades)"
     )
     context: Optional[str] = Field(default=None, description="Context de negoci o paràmetres addicionals")
+    _serialized_cache: Optional[str] = PrivateAttr(default=None)
 
     @field_validator("query")
     @classmethod
@@ -79,6 +80,22 @@ class AnalyticsQuery(BaseModel):
         if not value:
             raise ValueError("El conjunt de dades a analitzar no pot estar buit.")
         return value
+
+    def get_cached_payload(self) -> Optional[str]:
+        """Obté el contingut serialitzat en memòria cau de la pròpia consulta.
+
+        Returns:
+            Optional[str]: Cadena JSON serialitzada o None si no està disponible.
+        """
+        return self._serialized_cache
+
+    def set_cached_payload(self, serialized: Optional[str]) -> None:
+        """Assigna o allibera la memòria cau del payload serialitzat de la petició.
+
+        Args:
+            serialized: Cadena JSON serialitzada o None per alliberar memòria.
+        """
+        self._serialized_cache = serialized
 
 
 class AnalyticsResponse(BaseModel):
