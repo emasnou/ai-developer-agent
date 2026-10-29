@@ -1,13 +1,15 @@
 """Mòdul centralitzat de registre i rotació de logs d'auditoria per als agents.
 
 Aquest mòdul implementa un formatador JSON estructurat amb nivells INFO, WARNING i ERROR,
-garantint la creació automàtica del directori de logs i la rotació automàtica per mida.
+garantint la creació automàtica del directori de logs, la rotació automàtica per mida
+i la sincronització thread-safe per a entorns d'execució concurrents.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -41,6 +43,7 @@ class AgentLogger:
     """Gestor centralitzat de logger d'auditoria per als agents de programari."""
 
     _instances: Dict[str, logging.Logger] = {}
+    _lock: threading.Lock = threading.Lock()
 
     @classmethod
     def get_logger(
@@ -61,37 +64,41 @@ class AgentLogger:
         Returns:
             logging.Logger: Instància configurada del logger.
         """
-        if agent_name in cls._instances:
-            return cls._instances[agent_name]
+        # Fem servir un bloqueig de classe per evitar condicions de cursa en instanciació concurrent
+        with cls._lock:
+            if agent_name in cls._instances:
+                return cls._instances[agent_name]
 
-        logger = logging.getLogger(f"agent.{agent_name}")
-        logger.setLevel(logging.INFO)
-        logger.propagate = False
+            logger = logging.getLogger(f"agent.{agent_name}")
+            logger.setLevel(logging.INFO)
+            logger.propagate = False
 
-        if not logger.handlers:
-            log_path = Path(log_file)
-            log_path.parent.mkdir(parents=True, exist_ok=True)
+            if not logger.handlers:
+                log_path = Path(log_file)
+                log_path.parent.mkdir(parents=True, exist_ok=True)
 
-            handler = RotatingFileHandler(
-                filename=str(log_path),
-                maxBytes=max_bytes,
-                backupCount=backup_count,
-                encoding="utf-8",
-            )
-            handler.setFormatter(JSONFormatter())
-            logger.addHandler(handler)
+                handler = RotatingFileHandler(
+                    filename=str(log_path),
+                    maxBytes=max_bytes,
+                    backupCount=backup_count,
+                    encoding="utf-8",
+                )
+                handler.setFormatter(JSONFormatter())
+                logger.addHandler(handler)
 
-        cls._instances[agent_name] = logger
-        return logger
+            cls._instances[agent_name] = logger
+            return logger
 
     @classmethod
     def reset(cls) -> None:
-        """Tanca tots els handlers actius i buida el registre d'instàncies singleton."""
-        for logger in cls._instances.values():
-            for handler in list(logger.handlers):
-                handler.close()
-                logger.removeHandler(handler)
-        cls._instances.clear()
+        """Tanca tots els handlers actius i buida el registre d'instàncies singleton de manera thread-safe."""
+        # Sincronitzem la iteració i buidat per evitar RuntimeError en entorns multi-fil concurrents
+        with cls._lock:
+            for logger in list(cls._instances.values()):
+                for handler in list(logger.handlers):
+                    handler.close()
+                    logger.removeHandler(handler)
+            cls._instances.clear()
 
 
 class StructuredAgentAdapter(logging.LoggerAdapter):
