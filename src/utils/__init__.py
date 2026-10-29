@@ -1,6 +1,7 @@
 """Paquet d'utilitats transversals: configuració, logging estructurat, parseig JSON i changelog."""
 
 from src.utils.adr_manager import (
+    adr_lock,
     build_adr_filename,
     get_next_adr_id,
     materialize_adr_file,
@@ -39,6 +40,7 @@ __all__ = [
     "parse_developer_json_response",
     "parse_generic_json_response",
     "slugify_title",
+    "adr_lock",
     "get_next_adr_id",
     "build_adr_filename",
     "materialize_adr_file",
