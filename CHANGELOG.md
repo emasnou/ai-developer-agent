@@ -22,7 +22,7 @@ El format es basa en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) i 
 - **issue-31**: Resolució Issue #31 (Parametrització dels tests de validació per a camps numèrics negatius a TokenUsage mitjançant pytest.mark.parametrize.)
 - **issue-33**: Resolució Issue #33 (Implementació d'un límit configurable de registres històrics amb buffer circular (collections.deque) i purga periòdica a MetricsTracker per garantir un consum constant de memòria (OWASP A04 - DoS/OOM).)
 - **issue-35**: Resolució Issue #35 (Implementat el sanejament d'entrades per prevenir Log Injection (CWE-117) al registre d'auditoria de restabliment de contrasenyes.)
-- **issue-38**: Resolució Issue #38 (Afegida protecció de multithreading mitjançant threading.Lock a AgentLogger.reset() i AgentLogger.get_logger() a src/utils/logger.py, i creats tests unitaris de concurrència a tests/unit/test_logger.py.)
+- **issue-46**: Resolució Issue #46 (Encapsulació del payload serialitzat a AnalyticsQuery mitjançant PrivateAttr per garantir concurrència thread-safe a AnalyticsAgent)
 
 ### Changed
 - **Sincronització Documental Autònoma al `DeveloperAgent` (`src/agents/developer_agent.py`)**: Integració de `_sync_workspace_documentation` per actualitzar `docs/reference/index.md` i `docs/adr/README.md` automàticament a cada commit d'Issue o remediació de PR.
