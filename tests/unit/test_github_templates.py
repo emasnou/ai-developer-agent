@@ -403,4 +403,53 @@ def test_prompt_issue_selection_blocks_dependent_story_and_returns_to_menu(
     assert "Tornant al menú de selecció de Stories" in captured
 
 
+def test_developer_agent_devops_and_config_capabilities(tmp_path: Path) -> None:
+    """Verifica la lectura, permisos d'execució i validació d'artefactes de sistemes/DevOps/config."""
+    import os
+    from src.agents.developer_agent import DeveloperAgent
+
+    agent = DeveloperAgent(
+        llm_service=MagicMock(),
+        github_service=MagicMock(),
+        repo_name="emasnou/devops-repo",
+    )
+
+    files_to_write = [
+        {"path": "Dockerfile", "content": "FROM python:3.11-slim\nWORKDIR /app\n"},
+        {"path": "docker-compose.yml", "content": "services:\n  app:\n    build: .\n"},
+        {"path": "bin/healthcheck.sh", "content": "#!/usr/bin/env bash\nset -euo pipefail\necho ok\n"},
+        {"path": "migrations/001_init.sql", "content": "CREATE TABLE users (id INT PRIMARY KEY);\n"},
+        {"path": "config/settings.json", "content": '{"env": "production", "port": 8080}\n'},
+    ]
+    agent._write_files_to_workspace(files_to_write, tmp_path)
+
+    # Verifica que l'script operatiu a bin/ ha rebut permisos d'execució
+    script_path = tmp_path / "bin" / "healthcheck.sh"
+    assert os.access(script_path, os.X_OK)
+
+    # Verifica que _read_workspace_source_files carrega els fitxers de sistemes, DevOps i SQL
+    context = agent._read_workspace_source_files(tmp_path)
+    assert "Dockerfile" in context
+    assert "docker-compose.yml" in context
+    assert "bin/healthcheck.sh" in context
+    assert "migrations/001_init.sql" in context
+    assert "config/settings.json" in context
+
+    # Cap error de validació quan tots els fitxers són vàlids
+    assert DeveloperAgent._collect_devops_and_config_errors(files_to_write, tmp_path) == ""
+
+    # Detecta errors en JSON invàlid, Dockerfile sense FROM i script Bash amb error sintàctic
+    broken_files = [
+        {"path": "Dockerfile", "content": "RUN echo sense_imatge_base\n"},
+        {"path": "config/broken.json", "content": '{"unclosed": 123\n'},
+        {"path": "bin/broken.sh", "content": "#!/usr/bin/env bash\nif [ true ; then\necho falta_fi\n"},
+    ]
+    agent._write_files_to_workspace(broken_files, tmp_path)
+    errors = DeveloperAgent._collect_devops_and_config_errors(broken_files, tmp_path)
+    assert "DockerfileError a Dockerfile" in errors
+    assert "JSONDecodeError a config/broken.json" in errors
+    assert "BashSyntaxError a bin/broken.sh" in errors
+
+
+
 

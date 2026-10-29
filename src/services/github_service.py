@@ -11,6 +11,18 @@ from src.utils.config import GITHUB_REPO, GITHUB_REPOS, GITHUB_TOKEN
 from src.utils.logger import AgentLogger, StructuredAgentAdapter
 
 REPO_NAME_REGEX: re.Pattern[str] = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$")
+_ALLOWED_HIDDEN_PREFIXES: tuple[str, ...] = (".github/",)
+_ALLOWED_HIDDEN_FILES: frozenset[str] = frozenset(
+    {
+        ".dockerignore",
+        ".gitignore",
+        ".pre-commit-config.yaml",
+        ".pre-commit-config.yml",
+        ".env.example",
+        ".editorconfig",
+        ".flake8",
+    }
+)
 
 
 def validate_repo_name(repo_name: str) -> bool:
@@ -269,10 +281,11 @@ class GitHubService:
             raise
 
     def get_repository_tree(self, ref: Optional[str] = None) -> list[str]:
-        """Obté la llista de camins de fitxers del repositori actiu, incloent GitHub Actions.
+        """Obté la llista de camins de fitxers del repositori actiu, incloent DevOps i configuració.
 
-        Inclou els fitxers dins de `.github/` (com `.github/workflows/*.yml` per a desplegaments)
-        i exclou altres directoris ocults interns.
+        Inclou els fitxers dins de `.github/` (com `.github/workflows/*.yml`) i fitxers ocults
+        de configuració segura (`.dockerignore`, `.pre-commit-config.yaml`, `.env.example`),
+        excloent `.git/` i secrets (`.env`).
 
         Args:
             ref: Nom de la branca o referència de Git (per defecte la branca principal del repo).
@@ -290,7 +303,11 @@ class GitHubService:
                 element.path
                 for element in tree.tree
                 if element.type == "blob"
-                and (not element.path.startswith(".") or element.path.startswith(".github/"))
+                and (
+                    not element.path.startswith(".")
+                    or element.path.startswith(_ALLOWED_HIDDEN_PREFIXES)
+                    or element.path in _ALLOWED_HIDDEN_FILES
+                )
             ]
         except GithubException as e:
             self.logger.error(f"Error en obtenir l'arbre del repositori ({resolved_ref}): {e}")

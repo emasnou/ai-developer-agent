@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import shutil
@@ -10,6 +11,16 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Optional
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    tomllib = None  # type: ignore[assignment]
+
+try:
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover
+    yaml = None  # type: ignore[assignment]
 
 from src.agents.base_agent import BaseAgent
 from src.prompts.developer_prompts import (
@@ -44,6 +55,49 @@ _WORKSPACE_IGNORED_ITEMS: set[str] = {
     "logs",
     ".env",
 }
+_DEVOPS_CONFIG_FILENAMES: frozenset[str] = frozenset(
+    {
+        "Dockerfile",
+        "Makefile",
+        "Procfile",
+        "Vagrantfile",
+        "requirements.txt",
+        "requirements-dev.txt",
+        "pyproject.toml",
+        "setup.cfg",
+        "mkdocs.yml",
+        "mkdocs.yaml",
+        ".dockerignore",
+        ".pre-commit-config.yaml",
+        ".pre-commit-config.yml",
+        ".env.example",
+        "nginx.conf",
+        "supervisord.conf",
+    }
+)
+_DEVOPS_CONFIG_GLOBS: tuple[str, ...] = (
+    "Dockerfile.*",
+    "docker-compose*.yml",
+    "docker-compose*.yaml",
+    ".github/workflows/*.yml",
+    ".github/workflows/*.yaml",
+    ".github/dependabot.yml",
+    ".github/dependabot.yaml",
+    "bin/*",
+    "scripts/*",
+    "deploy/**/*",
+    "infra/**/*",
+    "k8s/**/*",
+    "helm/**/*",
+    "terraform/**/*.tf",
+    "systemd/**/*",
+    "config/**/*",
+    "migrations/**/*.sql",
+    "*.sql",
+    "*.service",
+    "*.timer",
+    "*.sh",
+)
 
 
 class DeveloperAgent(BaseAgent):
@@ -320,31 +374,55 @@ class DeveloperAgent(BaseAgent):
         return "main"
 
     def _read_workspace_source_files(self, workspace_dir: Path) -> str:
-        """Llegeix el contingut dels fitxers font i workflows sincronitzats al workspace.
+        """Llegeix el contingut dels fitxers font, sistemes, DevOps i configuració del workspace.
+
+        Inclou tant els mòduls Python (`src/**/*.py`) com els fitxers de sistemes,
+        infraestructura com a codi (IaC), contenidors (`Dockerfile`, `docker-compose.yml`),
+        pipelines CI/CD (`.github/workflows/*.yml`), scripts operatius (`bin/*`, `scripts/*`),
+        migracions SQL i configuracions (`pyproject.toml`, `requirements.txt`, `mkdocs.yml`).
 
         Args:
             workspace_dir: Ruta del workspace local.
 
         Returns:
-            str: Contingut concatenat dels fitxers Python i workflows de GitHub Actions.
+            str: Contingut concatenat dels fitxers de codi, sistemes, DevOps i configuració.
         """
-        candidate_files: list[Path] = []
+        raw_candidates: list[Path] = []
         src_path = workspace_dir / "src"
         if src_path.exists():
-            candidate_files.extend(sorted(src_path.rglob("*.py")))
+            raw_candidates.extend(sorted(src_path.rglob("*.py")))
         else:
-            candidate_files.extend(
+            raw_candidates.extend(
                 sorted(
                     p
                     for p in workspace_dir.rglob("*.py")
-                    if not any(part.startswith("test") for part in p.relative_to(workspace_dir).parts)
+                    if not any(
+                        part.startswith("test") for part in p.relative_to(workspace_dir).parts
+                    )
                 )
             )
 
-        workflows_path = workspace_dir / ".github" / "workflows"
-        if workflows_path.exists():
-            candidate_files.extend(sorted(workflows_path.glob("*.yml")))
-            candidate_files.extend(sorted(workflows_path.glob("*.yaml")))
+        for filename in sorted(_DEVOPS_CONFIG_FILENAMES):
+            exact_file = workspace_dir / filename
+            if exact_file.is_file():
+                raw_candidates.append(exact_file)
+
+        for pattern in _DEVOPS_CONFIG_GLOBS:
+            for matched in sorted(workspace_dir.glob(pattern)):
+                if matched.is_file():
+                    raw_candidates.append(matched)
+
+        candidate_files: list[Path] = []
+        seen_paths: set[Path] = set()
+        for file_path in raw_candidates:
+            resolved = file_path.resolve()
+            if resolved in seen_paths:
+                continue
+            rel_parts = file_path.relative_to(workspace_dir).parts
+            if any(part in _WORKSPACE_IGNORED_ITEMS or part == ".workspace" for part in rel_parts):
+                continue
+            seen_paths.add(resolved)
+            candidate_files.append(file_path)
 
         if not candidate_files:
             return "No hi ha fitxers existents al directori src/"
@@ -425,10 +503,91 @@ class DeveloperAgent(BaseAgent):
                 )
         return "\n".join(errors)
 
+    @staticmethod
+    def _collect_devops_and_config_errors(
+        files_list: list[dict[str, Any]], workspace_dir: Path
+    ) -> str:
+        """Valida l'estructura i sintaxi dels fitxers de sistemes, DevOps i configuració.
+
+        Comprova fitxers JSON, TOML, YAML, Dockerfiles (`FROM`) i scripts Bash (`bash -n`)
+        abans d'executar PyTest per permetre l'auto-correcció primerenca d'artefactes no-Python.
+
+        Args:
+            files_list: Llista de fitxers generats o modificats pel LLM.
+            workspace_dir: Ruta del workspace local.
+
+        Returns:
+            str: Detall dels errors d'estructura o sintaxi detectats, o cadena buida si tot és vàlid.
+        """
+        errors: list[str] = []
+        bash_bin = shutil.which("bash")
+
+        for file_item in files_list:
+            rel_path = file_item.get("path", "")
+            if not rel_path or rel_path.endswith(".py"):
+                continue
+            target_path = workspace_dir / rel_path
+            source = (
+                target_path.read_text(encoding="utf-8")
+                if target_path.exists()
+                else file_item.get("content", "")
+            )
+            file_name = Path(rel_path).name
+            suffix = Path(rel_path).suffix.lower()
+
+            if suffix == ".json":
+                try:
+                    json.loads(source)
+                except json.JSONDecodeError as exc:
+                    errors.append(
+                        f"JSONDecodeError a {rel_path} (línia {exc.lineno}, col {exc.colno}): {exc.msg}"
+                    )
+            elif suffix == ".toml" and tomllib is not None:
+                try:
+                    tomllib.loads(source)
+                except Exception as exc:
+                    errors.append(f"TOMLDecodeError a {rel_path}: {exc}")
+            elif suffix in {".yml", ".yaml"} and yaml is not None:
+                try:
+                    list(yaml.safe_load_all(source))
+                except Exception as exc:
+                    errors.append(f"YAMLError a {rel_path}: {exc}")
+            elif file_name == "Dockerfile" or file_name.startswith("Dockerfile."):
+                if not re.search(r"(?im)^\s*FROM\s+\S+", source):
+                    errors.append(
+                        f"DockerfileError a {rel_path}: Falta la instrucció base obligatòria 'FROM <imatge>'."
+                    )
+
+            first_line = source.splitlines()[0].strip() if source.strip() else ""
+            is_shell_script = (
+                suffix == ".sh"
+                or rel_path.startswith(("bin/", "scripts/"))
+                or (first_line.startswith("#!") and ("bash" in first_line or first_line.endswith("/sh")))
+            )
+            if is_shell_script and bash_bin and target_path.exists():
+                try:
+                    res = subprocess.run(
+                        [bash_bin, "-n", str(target_path)],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        check=False,
+                    )
+                    if res.returncode != 0:
+                        err_detail = (res.stderr or res.stdout or "").strip()
+                        errors.append(f"BashSyntaxError a {rel_path}: {err_detail}")
+                except Exception:
+                    pass
+
+        return "\n".join(errors)
+
     def _write_files_to_workspace(
         self, files_list: list[dict[str, Any]], workspace_dir: Path
     ) -> list[Path]:
         """Escriu els fitxers modificats o creats dins del workspace aïllat i en valida la sintaxi.
+
+        Assigna automàticament permisos d'execució (`0o755`) als scripts operatius (`bin/*`,
+        `scripts/*`, `*.sh` o fitxers amb *shebang* `#!`) perquè es puguin provar amb PyTest.
 
         Args:
             files_list: Llista de diccionaris amb `path` i `content`.
@@ -443,10 +602,11 @@ class DeveloperAgent(BaseAgent):
         saved_paths: list[Path] = []
         resolved_workspace = workspace_dir.resolve()
         for file_item in files_list:
-            target_path = (workspace_dir / file_item["path"]).resolve()
+            rel_path = file_item["path"]
+            target_path = (workspace_dir / rel_path).resolve()
             if not target_path.is_relative_to(resolved_workspace):
                 raise ValueError(
-                    f"Ruta de fitxer no permesa fora del workspace: '{file_item['path']}'"
+                    f"Ruta de fitxer no permesa fora del workspace: '{rel_path}'"
                 )
             target_path.parent.mkdir(parents=True, exist_ok=True)
             content = file_item["content"]
@@ -460,17 +620,26 @@ class DeveloperAgent(BaseAgent):
                         content = repaired
                         file_item["content"] = repaired
                         self.logger.info(
-                            f"Reparada automàticament errada tipogràfica de sintaxi a {file_item['path']}."
+                            f"Reparada automàticament errada tipogràfica de sintaxi a {rel_path}."
                         )
                     else:
                         self.logger.warning(
-                            f"Alerta de sintaxi/indentació a {file_item['path']}: {e}"
+                            f"Alerta de sintaxi/indentació a {rel_path}: {e}"
                         )
 
             target_path.write_text(content, encoding="utf-8")
+            if (
+                rel_path.startswith(("bin/", "scripts/", ".git/hooks/"))
+                or target_path.suffix == ".sh"
+                or content.lstrip().startswith("#!")
+            ):
+                try:
+                    target_path.chmod(target_path.stat().st_mode | 0o755)
+                except OSError:
+                    pass
             saved_paths.append(target_path)
-            self.logger.info(f"Fitxer actualitzat al Workspace: {file_item['path']}")
-            print(f"📄 Fitxer actualitzat al Workspace: {file_item['path']}")
+            self.logger.info(f"Fitxer actualitzat al Workspace: {rel_path}")
+            print(f"📄 Fitxer actualitzat al Workspace: {rel_path}")
 
         return saved_paths
 
@@ -923,10 +1092,15 @@ class DeveloperAgent(BaseAgent):
             return {"success": False, "attempts": 0}
 
         self._write_files_to_workspace(files_data, workspace_dir)
-        syntax_errors = self._collect_python_syntax_errors(files_data, workspace_dir)
+        py_syntax_errors = self._collect_python_syntax_errors(files_data, workspace_dir)
+        devops_syntax_errors = self._collect_devops_and_config_errors(files_data, workspace_dir)
+        syntax_errors = "\n".join(
+            err for err in (py_syntax_errors, devops_syntax_errors) if err
+        )
         if syntax_errors:
             self.logger.warning(
-                f"Detectats errors de sintaxi AST abans d'executar PyTest; aplicant auto-correcció prèvia:\n{syntax_errors}"
+                "Detectats errors de sintaxi o estructura (Python/DevOps/Config) abans "
+                f"d'executar PyTest; aplicant auto-correcció prèvia:\n{syntax_errors}"
             )
             files_data = self._request_surgical_fix(
                 files_data, syntax_errors, system_prompt, workspace_dir
