@@ -18,6 +18,8 @@
 | `src.prompts.developer_prompts` | [`src/prompts/developer_prompts.py`](../../src/prompts/developer_prompts.py) | Plantilles de prompts de sistema, auto-correcció i remediació per a l'Agent Desenvolupador (`DeveloperAgent`). | *(Mòdul de constants)* |
 | `src.prompts.review_prompts` | [`src/prompts/review_prompts.py`](../../src/prompts/review_prompts.py) | Plantilles de prompts per a l'auditoria de codi i l'extracció de millores (`CodeReviewAgent`). | *(Mòdul de constants)* |
 | `src.schemas.agent_schemas` | [`src/schemas/agent_schemas.py`](../../src/schemas/agent_schemas.py) | Esquemes de dades Pydantic per a les sortides estructurades (Structured Outputs) dels agents. | `FileItem`, `ADRAlternative`, `ArchitectureDecisionRecord`, `DeveloperPlan`, `CodeReviewResponse`, `ImprovementItem`, `ImprovementsResponse`, `AnalystStoryItem`, `AnalystPlan` |
+| `src.schemas.finops_schemas` | [`src/schemas/finops_schemas.py`](../../src/schemas/finops_schemas.py) | Esquemes Pydantic per a la gestió de telemetria de consum de tokens i costos FinOps. | `TokenUsage`, `PricingTier`, `CostBreakdown` |
+| `src.services.finops_service` | [`src/services/finops_service.py`](../../src/services/finops_service.py) | Servei de catàleg de preus i motor de càlcul de costos FinOps per a models de LLM. | `ModelPricingNotFoundError`, `FinOpsPricingCatalog`, `CostCalculator` |
 | `src.services.github_service` | [`src/services/github_service.py`](../../src/services/github_service.py) | Servei d'integració multi-repositori amb l'API de GitHub mitjançant PyGithub. | `GitHubService`, `validate_repo_name` |
 | `src.services.llm_service` | [`src/services/llm_service.py`](../../src/services/llm_service.py) | Servei de comunicació resilient amb l'API de Google Gemini. | `LLMService` |
 | `src.utils.adr_manager` | [`src/utils/adr_manager.py`](../../src/utils/adr_manager.py) | Mòdul per a la gestió, numeració seqüencial i materialització d'ADRs. | `slugify_title`, `get_next_adr_id`, `build_adr_filename`, `materialize_adr_file` |
@@ -101,6 +103,20 @@
 - **Resum:** Esquemes de dades Pydantic per a les sortides estructurades (Structured Outputs) dels agents.
 
 ::: src.schemas.agent_schemas
+
+### `src.schemas.finops_schemas`
+
+- **Fitxer font:** [`src/schemas/finops_schemas.py`](../../src/schemas/finops_schemas.py)
+- **Resum:** Esquemes Pydantic per a la gestió de telemetria de consum de tokens i costos FinOps.
+
+::: src.schemas.finops_schemas
+
+### `src.services.finops_service`
+
+- **Fitxer font:** [`src/services/finops_service.py`](../../src/services/finops_service.py)
+- **Resum:** Servei de catàleg de preus i motor de càlcul de costos FinOps per a models de LLM.
+
+::: src.services.finops_service
 
 ### `src.services.github_service`
 
