@@ -13,9 +13,9 @@ from src.agents.developer_agent import DeveloperAgent
 __all__ = [
     "BaseAgent",
     "AnalystAgent",
+    "DeveloperAgent",
+    "CodeReviewAgent",
     "AnalyticsAgent",
     "AnalyticsValidationError",
     "AnalyticsProcessingError",
-    "DeveloperAgent",
-    "CodeReviewAgent",
 ]
