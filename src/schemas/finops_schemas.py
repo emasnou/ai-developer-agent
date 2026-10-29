@@ -104,3 +104,40 @@ class CostBreakdown(BaseModel):
         default=None,
         description="Metadades addicionals o ràtios de consum de la transacció",
     )
+
+
+class CallMetricRecord(BaseModel):
+    """Registre individual d'una invocació de LLM amb telemetria de temps i rendiment."""
+
+    model_name: str = Field(description="Identificador del model executat")
+    duration_seconds: float = Field(ge=0.0, description="Durada de la petició en segons")
+    usage: TokenUsage = Field(description="Mètriques de tokens consumits")
+    cost: CostBreakdown = Field(description="Cost FinOps calculat per a la crida")
+    tokens_per_second: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Ràtio de velocitat expressada en tokens totals per segon (TPS)",
+    )
+    completion_tps: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Ràtio de generació expressada en completion tokens per segon",
+    )
+
+
+class SessionSummary(BaseModel):
+    """Resum agregat de telemetria i costos FinOps per a una sessió de treball."""
+
+    total_calls: int = Field(ge=0, description="Nombre total de crides registrades")
+    total_duration_seconds: float = Field(ge=0.0, description="Durada acumulada de totes les crides")
+    average_latency_seconds: float = Field(ge=0.0, description="Latència mitjana per crida")
+    total_tokens: int = Field(ge=0, description="Suma total de tokens utilitzats")
+    total_prompt_tokens: int = Field(ge=0, description="Suma de tokens d'entrada")
+    total_completion_tokens: int = Field(ge=0, description="Suma de tokens de resposta")
+    total_cached_tokens: int = Field(ge=0, description="Suma de tokens servits des de memòria cau")
+    total_cost_usd: float = Field(ge=0.0, description="Cost econòmic global acumulat en USD")
+    global_tps: float = Field(ge=0.0, description="Velocitat global en tokens totals per segon")
+    by_model: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Desglossament agregat de crides, tokens i costos per model",
+    )

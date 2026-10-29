@@ -10,8 +10,10 @@ from src.schemas.agent_schemas import (
     ImprovementsResponse,
 )
 from src.schemas.finops_schemas import (
+    CallMetricRecord,
     CostBreakdown,
     PricingTier,
+    SessionSummary,
     TokenUsage,
 )
 
@@ -26,4 +28,6 @@ __all__ = [
     "CostBreakdown",
     "PricingTier",
     "TokenUsage",
+    "CallMetricRecord",
+    "SessionSummary",
 ]

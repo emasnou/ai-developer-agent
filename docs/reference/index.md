@@ -18,10 +18,11 @@
 | `src.prompts.developer_prompts` | [`src/prompts/developer_prompts.py`](../../src/prompts/developer_prompts.py) | Plantilles de prompts de sistema, auto-correcció i remediació per a l'Agent Desenvolupador (`DeveloperAgent`). | *(Mòdul de constants)* |
 | `src.prompts.review_prompts` | [`src/prompts/review_prompts.py`](../../src/prompts/review_prompts.py) | Plantilles de prompts per a l'auditoria de codi i l'extracció de millores (`CodeReviewAgent`). | *(Mòdul de constants)* |
 | `src.schemas.agent_schemas` | [`src/schemas/agent_schemas.py`](../../src/schemas/agent_schemas.py) | Esquemes de dades Pydantic per a les sortides estructurades (Structured Outputs) dels agents. | `FileItem`, `ADRAlternative`, `ArchitectureDecisionRecord`, `DeveloperPlan`, `CodeReviewResponse`, `ImprovementItem`, `ImprovementsResponse`, `AnalystStoryItem`, `AnalystPlan` |
-| `src.schemas.finops_schemas` | [`src/schemas/finops_schemas.py`](../../src/schemas/finops_schemas.py) | Esquemes Pydantic per a la gestió de telemetria de consum de tokens i costos FinOps. | `TokenUsage`, `PricingTier`, `CostBreakdown` |
+| `src.schemas.finops_schemas` | [`src/schemas/finops_schemas.py`](../../src/schemas/finops_schemas.py) | Esquemes Pydantic per a la gestió de telemetria de consum de tokens i costos FinOps. | `TokenUsage`, `PricingTier`, `CostBreakdown`, `CallMetricRecord`, `SessionSummary` |
 | `src.services.finops_service` | [`src/services/finops_service.py`](../../src/services/finops_service.py) | Servei de catàleg de preus i motor de càlcul de costos FinOps per a models de LLM. | `ModelPricingNotFoundError`, `FinOpsPricingCatalog`, `CostCalculator` |
 | `src.services.github_service` | [`src/services/github_service.py`](../../src/services/github_service.py) | Servei d'integració multi-repositori amb l'API de GitHub mitjançant PyGithub. | `GitHubService`, `validate_repo_name` |
 | `src.services.llm_service` | [`src/services/llm_service.py`](../../src/services/llm_service.py) | Servei de comunicació resilient amb l'API de Google Gemini. | `LLMService` |
+| `src.services.metrics_tracker` | [`src/services/metrics_tracker.py`](../../src/services/metrics_tracker.py) | Servei de telemetria i monitoratge de rendiment, latència i eficiència d'execució d'agents. | `CallTrackingContext`, `MetricsTracker` |
 | `src.utils.adr_manager` | [`src/utils/adr_manager.py`](../../src/utils/adr_manager.py) | Mòdul per a la gestió, numeració seqüencial i materialització d'ADRs. | `slugify_title`, `get_next_adr_id`, `build_adr_filename`, `materialize_adr_file` |
 | `src.utils.changelog_updater` | [`src/utils/changelog_updater.py`](../../src/utils/changelog_updater.py) | Mòdul d'automatització i validació per mantenir actualitzat el fitxer CHANGELOG.md. | `classify_commit_message`, `group_commits_by_category`, `update_changelog_content`, `release_unreleased_content`, `get_recent_git_commits`, `update_changelog_file`, `main` |
 | `src.utils.config` | [`src/utils/config.py`](../../src/utils/config.py) | Mòdul de configuració i càrrega segura de variables d'entorn. | `AppConfig`, `parse_repo_list` |
@@ -131,6 +132,13 @@
 - **Resum:** Servei de comunicació resilient amb l'API de Google Gemini.
 
 ::: src.services.llm_service
+
+### `src.services.metrics_tracker`
+
+- **Fitxer font:** [`src/services/metrics_tracker.py`](../../src/services/metrics_tracker.py)
+- **Resum:** Servei de telemetria i monitoratge de rendiment, latència i eficiència d'execució d'agents.
+
+::: src.services.metrics_tracker
 
 ### `src.utils.adr_manager`
 
