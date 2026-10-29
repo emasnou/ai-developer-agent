@@ -143,6 +143,17 @@ class ArchitectureDecisionRecord(BaseModel):
         )
 
 
+class DeveloperPlan(BaseModel):
+    """Pla d'execució multi-fitxer generat pel DeveloperAgent."""
+
+    summary: str = Field(description="Resum breu de les modificacions realitzades")
+    files: list[FileItem] = Field(
+        description="Llista de fitxers a crear o modificar dins del repositori"
+    )
+    adr: Optional[ArchitectureDecisionRecord] = Field(
+        default=None,
+        description="Registre de Decisió d'Arquitectura (ADR) opcional si hi ha canvis estructurals",
+    )
 
 
 class CodeReviewResponse(BaseModel):
