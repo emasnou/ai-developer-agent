@@ -1,4 +1,4 @@
-"""Paquet d'esquemes Pydantic per a les respostes estructurades dels agents i mètriques FinOps."""
+"""Paquet d'esquemes Pydantic per a les respostes estructurades dels agents i FinOps."""
 
 from src.schemas.agent_schemas import (
     ADRAlternative,
