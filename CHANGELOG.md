@@ -20,6 +20,7 @@ El format es basa en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) i 
 - **issue-21**: Resolució Issue #21 (Implementació de protecció contra concurrència atòmica (inter-procés i multi-fil) i ordenació estrictament numèrica a get_next_adr_id i materialize_adr_file.)
 - **issue-42**: Resolució Issue #42 (Afegir límit de mida màxima (max_payload_size) a validate_request i a l'AnalyticsAgent per protecció contra atacs DoS/OOM)
 - **issue-31**: Resolució Issue #31 (Parametrització dels tests de validació per a camps numèrics negatius a TokenUsage mitjançant pytest.mark.parametrize.)
+- **issue-33**: Resolució Issue #33 (Implementació d'un límit configurable de registres històrics amb buffer circular (collections.deque) i purga periòdica a MetricsTracker per garantir un consum constant de memòria (OWASP A04 - DoS/OOM).)
 
 ### Changed
 - **Sincronització Documental Autònoma al `DeveloperAgent` (`src/agents/developer_agent.py`)**: Integració de `_sync_workspace_documentation` per actualitzar `docs/reference/index.md` i `docs/adr/README.md` automàticament a cada commit d'Issue o remediació de PR.
