@@ -33,13 +33,18 @@ class TokenUsage(BaseModel):
 
     @model_validator(mode="after")
     def compute_or_validate_total(self) -> TokenUsage:
-        """Assegura la coherència de cached_tokens i calcula total_tokens si no s'ha especificat.
+        """Assegura la coherència de cached_tokens i valida o calcula total_tokens.
+
+        Garanteix que cached_tokens no superi prompt_tokens i que, en cas d'introduir
+        total_tokens manualment, el seu valor sigui major o igual a la suma de
+        prompt_tokens i completion_tokens.
 
         Returns:
             TokenUsage: Instància validada amb el còmput de tokens.
 
         Raises:
-            ValueError: Si cached_tokens és estrictament superior a prompt_tokens.
+            ValueError: Si cached_tokens és estrictament superior a prompt_tokens o
+                si total_tokens és inferior a la suma de prompt_tokens i completion_tokens.
         """
         if self.cached_tokens > self.prompt_tokens:
             raise ValueError(
@@ -49,6 +54,11 @@ class TokenUsage(BaseModel):
         calculated = self.prompt_tokens + self.completion_tokens
         if self.total_tokens == 0 and calculated > 0:
             object.__setattr__(self, "total_tokens", calculated)
+        elif self.total_tokens < calculated:
+            raise ValueError(
+                f"total_tokens ({self.total_tokens}) no pot ser inferior a la "
+                f"suma de prompt_tokens i completion_tokens ({calculated})."
+            )
         return self
 
 
