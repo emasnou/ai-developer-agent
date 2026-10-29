@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
@@ -15,6 +16,8 @@ from src.schemas.finops_schemas import (
 )
 from src.services.finops_service import CostCalculator
 from src.utils.logger import AgentLogger, StructuredAgentAdapter
+
+DEFAULT_MAX_RECORDS_LIMIT: int = 10000
 
 
 class CallTrackingContext:
@@ -61,16 +64,39 @@ class CallTrackingContext:
 class MetricsTracker:
     """Seguiment de mètriques de sessió, càlcul de latències, TPS i integració FinOps."""
 
-    def __init__(self, calculator: Optional[CostCalculator] = None) -> None:
-        """Inicialitza el gestor de mètriques de telemetria.
+    def __init__(
+        self,
+        calculator: Optional[CostCalculator] = None,
+        max_records: Optional[int] = None,
+    ) -> None:
+        """Inicialitza el gestor de mètriques de telemetria amb gestió de buffer circular.
 
         Args:
             calculator: Instància opcional del calculador de costos FinOps.
+            max_records: Nombre màxim de registres retinguts a memòria (buffer circular).
+                Si s'indica, s'aplica una política FIFO automàtica per prevenir exhauriment
+                de memòria en execucions llargues (OWASP A04 - DoS/OOM).
+
+        Raises:
+            ValueError: Si max_records és menor o igual a zero.
         """
+        if max_records is not None and max_records <= 0:
+            raise ValueError("El paràmetre max_records ha de ser un enter estrictament positiu.")
+
         self.calculator: CostCalculator = calculator or CostCalculator()
-        self._records: list[CallMetricRecord] = []
+        self._max_records: Optional[int] = max_records
+        self._records: deque[CallMetricRecord] = deque(maxlen=max_records)
         base_logger = AgentLogger.get_logger("MetricsTracker")
         self.logger = StructuredAgentAdapter(base_logger, "MetricsTracker")
+
+    @property
+    def max_records(self) -> Optional[int]:
+        """Obté el límit màxim de registres històrics configurat al buffer circular.
+
+        Returns:
+            Optional[int]: Nombre màxim de registres o None si no hi ha límit.
+        """
+        return self._max_records
 
     @property
     def records(self) -> list[CallMetricRecord]:
@@ -85,6 +111,28 @@ class MetricsTracker:
         """Reinicia totes les mètriques acumulades a la sessió actual."""
         self._records.clear()
         self.logger.info("Mètriques de sessió reiniciades.")
+
+    def purge_oldest(self, count: int) -> int:
+        """Purga manualment els registres més antics de memòria per alliberar espai.
+
+        Args:
+            count: Nombre de registres a eliminar començant pel més antic.
+
+        Returns:
+            int: Nombre real de registres expulsats de memòria.
+
+        Raises:
+            ValueError: Si count és menor o igual a zero.
+        """
+        if count <= 0:
+            raise ValueError("El nombre de registres a purgar ha de ser un enter estrictament positiu.")
+
+        to_remove = min(count, len(self._records))
+        for _ in range(to_remove):
+            self._records.popleft()
+
+        self.logger.info(f"S'han purgat {to_remove} registres antics de memòria.")
+        return to_remove
 
     @staticmethod
     def calculate_tps(tokens: int, duration_seconds: float) -> float:
