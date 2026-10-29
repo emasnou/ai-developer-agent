@@ -15,6 +15,7 @@ El format es basa en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) i 
 - Resolució Issue #9 (Implementació del mòdul centralitzat de registre i rotació de logs d'auditoria en format JSON per als agents, integrat amb AnalystAgent, DeveloperAgent i CodeReviewAgent, acompanyat de tests unitaris robustos basats en tmp_path i mides reduïdes.)
 - **issue-19**: Resolució Issue #19 (Implementació de la generació, numeració seqüencial i materialització automàtica d'ADRs (Architecture Decision Records) pel DeveloperAgent.)
 - **issue-29**: Resolució Issue #29 (Afegir exportació dels esquemes FinOps a src/schemas/__init__.py i implementar la suite completa de tests de validació de restriccions no negatives (ge=0) a TokenUsage i mètriques FinOps.)
+- **issue-23**: Resolució Issue #23 (Implementació del servei MetricsTracker per al seguiment de sessions, mesura de latències amb context managers, ràtios d'eficiència (TPS) i exportació d'informes FinOps.)
 
 ### Changed
 - **Sincronització Documental Autònoma al `DeveloperAgent` (`src/agents/developer_agent.py`)**: Integració de `_sync_workspace_documentation` per actualitzar `docs/reference/index.md` i `docs/adr/README.md` automàticament a cada commit d'Issue o remediació de PR.
