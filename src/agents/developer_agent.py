@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -90,6 +92,19 @@ class DeveloperAgent(BaseAgent):
             self.logger.error(f"No s'ha pogut parsejar cap JSON vàlid del LLM: {exc}")
             raise
 
+    def _is_local_repository(self, root_dir: Optional[Path] = None) -> bool:
+        """Comprova si el repositori actiu correspon al propi repositori local d'execució.
+
+        Args:
+            root_dir: Directori arrel local opcional (per defecte el directori actual).
+
+        Returns:
+            bool: `True` si s'està treballant sobre el repositori local o sense repo explícit.
+        """
+        resolved_root = (root_dir or Path(".")).resolve()
+        active_repo = self.active_repo_name
+        return active_repo is None or active_repo.endswith(f"/{resolved_root.name}")
+
     def _prepare_workspace_environment(self, issue_number: int) -> Path:
         """Crea un directori de workspace aïllat per al repositori i Issue actuals.
 
@@ -111,7 +126,7 @@ class DeveloperAgent(BaseAgent):
             shutil.rmtree(workspace_dir)
 
         active_repo = self.active_repo_name
-        is_local_repo = active_repo is None or active_repo.endswith(f"/{root_dir.name}")
+        is_local_repo = self._is_local_repository(root_dir)
 
         if not is_local_repo:
             self.logger.info(
@@ -135,21 +150,27 @@ class DeveloperAgent(BaseAgent):
         shutil.copytree(root_dir, workspace_dir, ignore=ignore_patterns)
         return workspace_dir
 
-    def _download_branch_content(self, workspace_dir: Path, ref: str = "main") -> None:
+    def _download_branch_content(
+        self, workspace_dir: Path, ref: str = "main", overwrite_existing: bool = True
+    ) -> None:
         """Descarrega i sincronitza al workspace el contingut d'una branca remota de GitHub.
 
         Args:
             workspace_dir: Ruta del workspace local on escriure els fitxers.
             ref: Nom de la branca o referència de Git a sincronitzar (per defecte 'main').
+            overwrite_existing: Si és `False`, conserva els fitxers ja copiats de l'entorn
+                local per evitar sobrescriure correccions locals amb versions remotes antigues.
         """
         self.logger.info(f"Sincronitzant contingut de la branca '{ref}' de GitHub al workspace...")
         print(f"📥 [DeveloperAgent] Sincronitzant contingut de la branca '{ref}' al workspace...")
         repo_tree = self.github.get_repository_tree(ref=ref)
 
         for file_path in repo_tree:
+            target_file = workspace_dir / file_path
+            if not overwrite_existing and target_file.exists():
+                continue
             content = self.github.get_file_content(file_path, ref=ref)
             if content is not None:
-                target_file = workspace_dir / file_path
                 target_file.parent.mkdir(parents=True, exist_ok=True)
                 target_file.write_text(content, encoding="utf-8")
 
@@ -274,6 +295,32 @@ class DeveloperAgent(BaseAgent):
         env["PYTHONPATH"] = os.pathsep.join([root_workspace, src_workspace])
         return env
 
+    @staticmethod
+    def _trim_pytest_output(error_log: str, max_chars: int = 4000) -> str:
+        """Retalla la sortida de PyTest preservant sempre la secció de FAILURES/ERRORS final.
+
+        Args:
+            error_log: Sortida completa (stdout/stderr) de l'execució de PyTest.
+            max_chars: Límit màxim de caràcters a retornar.
+
+        Returns:
+            str: Traça d'error rellevant amb el detall de l'asserció o excepció.
+        """
+        if len(error_log) <= max_chars:
+            return error_log
+
+        for marker in ("=== FAILURES ===", "=== ERRORS ===", "short test summary info"):
+            idx = error_log.find(marker)
+            if idx != -1:
+                relevant = error_log[idx:]
+                if len(relevant) <= max_chars:
+                    return relevant
+                return relevant[-max_chars:]
+
+        head_len = min(600, max_chars // 4)
+        tail_len = max_chars - head_len - 35
+        return f"{error_log[:head_len]}\n...[sortida PyTest retallada]...\n{error_log[-tail_len:]}"
+
     def _run_pytest_command(
         self, cmd: list[str], workspace_dir: Path, env: dict[str, str], phase_label: str
     ) -> tuple[bool, str]:
@@ -300,7 +347,8 @@ class DeveloperAgent(BaseAgent):
             )
             if res.returncode != 0:
                 output = f"{res.stdout or ''}\n{res.stderr or ''}".strip()
-                self.logger.error(f"Els {phase_label} han fallat.")
+                failure_excerpt = self._trim_pytest_output(output, max_chars=1500)
+                self.logger.error(f"Els {phase_label} han fallat:\n{failure_excerpt}")
                 return False, output
             return True, ""
         except subprocess.TimeoutExpired:
@@ -330,7 +378,7 @@ class DeveloperAgent(BaseAgent):
         if targeted_tests:
             self.logger.info(f"Executant {len(targeted_tests)} test(s) específics de la Issue...")
             print(f"🎯 [Tests] Executant {len(targeted_tests)} test(s) específics de la Issue...")
-            cmd = ["pytest", "-v", "-x", "--tb=short", *targeted_tests]
+            cmd = [sys.executable, "-m", "pytest", "-v", "-x", "--tb=short", *targeted_tests]
             passed, output = self._run_pytest_command(cmd, workspace_dir, env, "tests específics")
             if not passed:
                 return False, output
@@ -339,10 +387,41 @@ class DeveloperAgent(BaseAgent):
         if unit_dir.exists():
             self.logger.info("Executant regressió de tests unitaris...")
             print("🛡️ [Tests] Executant regressió de tests unitaris...")
-            cmd = ["pytest", "-v", "-x", "--tb=short", str(unit_dir)]
+            cmd = [sys.executable, "-m", "pytest", "-v", "-x", "--tb=short", str(unit_dir)]
             return self._run_pytest_command(cmd, workspace_dir, env, "tests unitaris de regressió")
 
         return True, ""
+
+    @staticmethod
+    def _extract_failing_test_context(
+        error_log: str, workspace_dir: Path, files_data: list[dict[str, Any]]
+    ) -> str:
+        """Extreu el contingut dels fitxers de test esmentats a l'error que no siguin a `files_data`.
+
+        Args:
+            error_log: Sortida d'error de PyTest.
+            workspace_dir: Ruta del workspace local.
+            files_data: Fitxers actualment gestionats per la tasca.
+
+        Returns:
+            str: Bloc de context amb els fitxers de test que han fallat, o cadena buida.
+        """
+        tracked_paths = {f.get("path", "") for f in files_data}
+        matched_tests = sorted(set(re.findall(r"(tests/[A-Za-z0-9_/.-]+\.py)", error_log)))
+        extra_contexts: list[str] = []
+        for rel_test in matched_tests:
+            if rel_test in tracked_paths:
+                continue
+            test_file = workspace_dir / rel_test
+            if test_file.is_file():
+                try:
+                    content = test_file.read_text(encoding="utf-8")
+                    extra_contexts.append(
+                        f"Fitxer de test de regressió que ha fallat (NOMÉS LECTURA): {rel_test}\n{content}\n"
+                    )
+                except Exception:
+                    continue
+        return "\n".join(extra_contexts)
 
     def _request_surgical_fix(
         self,
@@ -366,6 +445,10 @@ class DeveloperAgent(BaseAgent):
         files_summary_text = "\n".join(
             [f"Fitxer: {f['path']}\n{f['content']}\n" for f in files_data]
         )
+        extra_test_context = self._extract_failing_test_context(error_log, workspace_dir, files_data)
+        if extra_test_context:
+            files_summary_text = f"{files_summary_text}\n{extra_test_context}"
+
         fix_prompt = DEVELOPER_FIX_PROMPT.format(
             code_policy=self.code_policy,
             files_summary=files_summary_text,
@@ -531,7 +614,11 @@ class DeveloperAgent(BaseAgent):
         default_branch = self._resolve_default_branch()
 
         workspace_dir = self._prepare_workspace_environment(issue_number)
-        self._download_branch_content(workspace_dir, ref=default_branch)
+        self._download_branch_content(
+            workspace_dir,
+            ref=default_branch,
+            overwrite_existing=not self._is_local_repository(),
+        )
 
         branch_name = f"feature/issue-{issue_number}"
         self.logger.info(f"Creant branca remota '{branch_name}'...")
@@ -591,7 +678,7 @@ class DeveloperAgent(BaseAgent):
 
             self.logger.warning(f"Els tests han fallat (Intent {attempt}).")
             print(f"❌ Els tests han fallat (Intent {attempt}).")
-            trimmed_log = error_log[:3500]
+            trimmed_log = self._trim_pytest_output(error_log, max_chars=4000)
             print(f"--- Error de PyTest ---\n{trimmed_log}")
 
             if attempt < max_retries:
@@ -681,7 +768,10 @@ class DeveloperAgent(BaseAgent):
 
                 if attempt < max_retries:
                     files_data = self._request_surgical_fix(
-                        files_data, error_log[:3500], system_prompt, workspace_dir
+                        files_data,
+                        self._trim_pytest_output(error_log, max_chars=4000),
+                        system_prompt,
+                        workspace_dir,
                     )
 
             self.logger.error("Els tests han fallat després de la remediació.")

@@ -85,13 +85,17 @@ def _check_callable_node(
         list[str]: Llista d'incidències detectades (buida si compleix la normativa).
     """
     issues: list[str] = []
-    qualname = f"{parent_class}.{node.name}" if parent_class else node.name
+    context_suffix = f" (classe '{parent_class}')" if parent_class else ""
     is_public = not node.name.startswith("_") or node.name == "__init__"
 
     if is_public and not ast.get_docstring(node):
-        issues.append(f"{rel_path}:{node.lineno} -> Falta docstring a '{qualname}'")
+        issues.append(
+            f"{rel_path}:{node.lineno} -> Manca docstring a la funció/mètode públic '{node.name}'{context_suffix}"
+        )
     if node.returns is None:
-        issues.append(f"{rel_path}:{node.lineno} -> Falta anotació de retorn (-> ...) a '{qualname}'")
+        issues.append(
+            f"{rel_path}:{node.lineno} -> Manca anotació de tipus de retorn (PEP 484) a '{node.name}'{context_suffix}"
+        )
     return issues
 
 
@@ -106,6 +110,7 @@ def inspect_python_module(file_path: Path, root_dir: Path) -> ModuleDocInfo:
         ModuleDocInfo: Informació documental i llista de violacions detectades.
     """
     rel_file = file_path.resolve().relative_to(root_dir.resolve()).as_posix()
+    is_init_file = file_path.name == "__init__.py"
     module_name = rel_file[:-3].replace("/", ".")
     if module_name.endswith(".__init__"):
         module_name = module_name[: -len(".__init__")]
@@ -113,11 +118,12 @@ def inspect_python_module(file_path: Path, root_dir: Path) -> ModuleDocInfo:
     source = file_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=rel_file)
     mod_doc = ast.get_docstring(tree) or ""
-    summary = mod_doc.splitlines()[0].strip() if mod_doc else "Sense descripció de mòdul."
+    default_summary = "Inicialització del paquet." if is_init_file else "Sense descripció de mòdul."
+    summary = mod_doc.splitlines()[0].strip() if mod_doc else default_summary
 
     violations: list[str] = []
-    if not mod_doc:
-        violations.append(f"{rel_file}:1 -> Falta docstring de mòdul")
+    if not mod_doc and not is_init_file:
+        violations.append(f"{rel_file}:1 -> Manca docstring de mòdul")
 
     classes: list[str] = []
     functions: list[str] = []
@@ -126,7 +132,9 @@ def inspect_python_module(file_path: Path, root_dir: Path) -> ModuleDocInfo:
         if isinstance(node, ast.ClassDef) and not node.name.startswith("_"):
             classes.append(node.name)
             if not ast.get_docstring(node):
-                violations.append(f"{rel_file}:{node.lineno} -> Falta docstring a la classe '{node.name}'")
+                violations.append(
+                    f"{rel_file}:{node.lineno} -> Manca docstring a la classe pública '{node.name}'"
+                )
             for sub in node.body:
                 if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     violations.extend(_check_callable_node(sub, rel_file, parent_class=node.name))
@@ -332,21 +340,21 @@ def sync_adr_index(adr_dir: Path) -> bool:
     return False
 
 
-def update_all_documentation(root_dir: Path = Path(".")) -> dict[str, bool]:
+def update_all_documentation(root_dir: Path = Path(".")) -> list[str]:
     """Executa la sincronització automàtica de la referència d'API i de l'índex d'ADRs.
 
     Args:
         root_dir: Directori arrel del repositori o del workspace a sincronitzar.
 
     Returns:
-        dict[str, bool]: Estat d'actualització de `reference_updated` i `adr_index_updated`.
+        list[str]: Llista de rutes relatives dels fitxers de documentació actualitzats.
     """
     resolved_root = root_dir.resolve()
     src_dir = resolved_root / "src"
     ref_file = resolved_root / "docs" / "reference" / "index.md"
     adr_dir = resolved_root / "docs" / "adr"
 
-    reference_updated = False
+    updated_files: list[str] = []
     if src_dir.exists():
         modules = scan_source_modules(src_dir, resolved_root)
         new_ref_content = generate_reference_markdown(modules)
@@ -354,13 +362,11 @@ def update_all_documentation(root_dir: Path = Path(".")) -> dict[str, bool]:
         if new_ref_content != old_ref_content:
             ref_file.parent.mkdir(parents=True, exist_ok=True)
             ref_file.write_text(new_ref_content, encoding="utf-8")
-            reference_updated = True
+            updated_files.append("docs/reference/index.md")
 
-    adr_index_updated = sync_adr_index(adr_dir)
-    return {
-        "reference_updated": reference_updated,
-        "adr_index_updated": adr_index_updated,
-    }
+    if sync_adr_index(adr_dir):
+        updated_files.append("docs/adr/README.md")
+    return updated_files
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -414,11 +420,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("✅ La documentació de referència està sincronitzada.")
         return 0
 
-    result = update_all_documentation(resolved_root)
-    if result["reference_updated"] or result["adr_index_updated"]:
+    updated_files = update_all_documentation(resolved_root)
+    if updated_files:
         print(
-            f"📚 Documentació sincronitzada automàticament "
-            f"(Referència: {result['reference_updated']}, ADR Index: {result['adr_index_updated']})."
+            f"📚 Documentació sincronitzada automàticament ({', '.join(updated_files)})."
         )
     else:
         print("ℹ️ La documentació tècnica ja es trobava completament actualitzada.")

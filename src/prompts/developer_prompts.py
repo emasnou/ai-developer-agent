@@ -23,7 +23,10 @@ REGLES D'OR STRICT FORMAT I DISSENY DE CODI:
     - AÏLLAMENT TOTAL: Els tests unitaris i d'integració mai han d'escriure a carpetes de producció directament. Utilitza SEMPRE la fixture `tmp_path` de pytest per a fitxers de log temporals.
     - PROVES DE ROTACIÓ O LÍMITS: Per provar rotació de fitxers (ex: rotació d'1 MB), NO escriguis 1 MB de línies en bucles lents a disc. Configura un paràmetre reduït al test (ex: `maxBytes=1024` o `monkeypatch`) per validar la rotació en mil·lisegons sense bloquejos de fitxer ni timeouts.
 5. MANTÉN LA INDENTACIÓ: Mantén exactament els 4 espais per nivell d'indentació Python.
-6. Genera o adapta els tests a `tests/unit/` i opcionalment `tests/integration/` per provar els canvis amb `pytest`.
+6. VALIDACIÓ AST OBLIGATÒRIA (DOCSTRINGS I TYPE HINTS PEP 484):
+    - El projecte disposa d'un test de regressió AST (`test_validate_docstrings_and_types_real_src_is_100_percent_compliant`) que comprova tots els fitxers de `src/`.
+    - TOT mòdul nou o modificat a `src/`, TOTA classe pública i TOTA funció o mètode públic (inclòs `__init__`) HA DE TENIR obligatòriament un docstring Google Style en català i anotació explícita de tipus de retorn (`-> ...`, incloent `-> None`).
+7. Genera o adapta els tests a `tests/unit/` i opcionalment `tests/integration/` per provar els canvis amb `pytest`.
 
 HAS DE RESPONDRE ÚNICAMENT AMB UN OBJECTE JSON VÀLID (sense text addicional ni blocs de markdown fora del JSON) amb aquesta estructura exactament:
 
@@ -55,8 +58,9 @@ Error de PyTest:
 
 INSTRUCCIONS DE CORRECCIÓ LOCALITZADA:
 1. Analitza la traça exacta de l'error (línia, asserció o excepció) i corregeix la causa arrel.
-2. MODIFICA ÚNICAMENT els fitxers que realment necessiten canvis per solucionar el test que falla. Si un fitxer ja era correcte, no cal que el retornis o mantén-lo intacte.
-3. Assegura't que els tests utilitzin `tmp_path` per a fitxers i evitin bucles lents de generació massiva de dades.
+2. MODIFICA ÚNICAMENT els fitxers de la tasca que realment necessiten canvis per solucionar el test que falla. Si un fitxer ja era correcte, no cal que el retornis o mantén-lo intacte.
+3. PROHIBIT MODIFICAR MÒDULS ALIENS O EL VALIDADOR AST: Si falla `test_validate_docstrings_and_types_real_src_is_100_percent_compliant` o un test de regressió de `test_doc_updater.py`, afegeix els docstrings o les anotacions de retorn (`-> ...`) que faltin als fitxers nous/modificats de la teva tasca; NO modifiquis `src/utils/doc_updater.py` ni desactivis tests de regressió existents.
+4. Assegura't que els tests utilitzin `tmp_path` per a fitxers i evitin bucles lents de generació massiva de dades.
 
 Respon ÚNICAMENT amb un objecte JSON vàlid amb el mateix format:
 {{

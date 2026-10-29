@@ -143,15 +143,6 @@ class ArchitectureDecisionRecord(BaseModel):
         )
 
 
-class DeveloperPlan(BaseModel):
-    """Pla de canvis complet generat per l'agent desenvolupador."""
-
-    summary: str = Field(description="Resum breu de les modificacions realitzades")
-    files: list[FileItem] = Field(description="Llista de fitxers modificats o creats")
-    adr: Optional[ArchitectureDecisionRecord] = Field(
-        default=None,
-        description="Registre opcional de decisió d'arquitectura (ADR) si el canvi és estructural",
-    )
 
 
 class CodeReviewResponse(BaseModel):

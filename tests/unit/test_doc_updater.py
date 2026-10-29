@@ -25,7 +25,25 @@ def test_validate_docstrings_and_types_real_src_is_100_percent_compliant() -> No
 
     violations = validate_docstrings_and_types(src_dir=src_dir, root_dir=repo_root)
 
-    assert violations == []
+    assert not violations, (
+        "S'han detectat fitxers a 'src/' que incompleixen la política de Docstrings (PEP 257) "
+        "o Type Hints de retorn (PEP 484). IMPORTANT: Corregeix el fitxer de 'src/' indicat "
+        "a continuació afegint-hi els docstrings o anotacions de retorn que hi falten "
+        "(NO modifiquis src/utils/doc_updater.py):\n" + "\n".join(violations)
+    )
+
+
+def test_inspect_python_module_allows_init_without_docstring(tmp_path: Path) -> None:
+    """Verifica que un fitxer `__init__.py` sense docstring no genera falsos positius."""
+    src_dir = tmp_path / "src" / "utils"
+    src_dir.mkdir(parents=True)
+    init_file = src_dir / "__init__.py"
+    init_file.write_text("", encoding="utf-8")
+
+    info = inspect_python_module(init_file, tmp_path)
+
+    assert info.module_path == "src.utils"
+    assert info.violations == ()
 
 
 def test_inspect_python_module_detects_missing_docstrings_and_return_types(
@@ -191,4 +209,51 @@ def test_developer_agent_sync_workspace_documentation_adds_files_to_commit(
     committed_paths = [item["path"] for item in files_to_commit]
     assert "docs/reference/index.md" in committed_paths
     assert "docs/adr/README.md" in committed_paths
+
+
+def test_developer_agent_preserves_local_files_and_extracts_pytest_failures(
+    tmp_path: Path,
+) -> None:
+    """Verifica que `DeveloperAgent` no sobrescriu fitxers locals i conserva la secció FAILURES de PyTest."""
+    mock_gh = MagicMock()
+    mock_gh.get_repository_tree.return_value = ["src/utils/doc_updater.py", "src/new_remote.py"]
+    mock_gh.get_file_content.side_effect = lambda path, ref="main": f"# Contingut remot de {path}\n"
+
+    agent = DeveloperAgent(
+        llm_service=MagicMock(),
+        github_service=mock_gh,
+        repo_name="owner/ai-developer-agent",
+    )
+
+    local_file = tmp_path / "src" / "utils" / "doc_updater.py"
+    local_file.parent.mkdir(parents=True)
+    local_file.write_text("# Contingut local corregit\n", encoding="utf-8")
+
+    agent._download_branch_content(tmp_path, ref="main", overwrite_existing=False)
+
+    assert local_file.read_text(encoding="utf-8") == "# Contingut local corregit\n"
+    assert (tmp_path / "src" / "new_remote.py").read_text(encoding="utf-8") == (
+        "# Contingut remot de src/new_remote.py\n"
+    )
+
+    test_file = tmp_path / "tests" / "unit" / "test_regression.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_reg() -> None:\n    assert True\n", encoding="utf-8")
+
+    long_output = (
+        "tests/unit/test_ok.py::test_pass PASSED\n" * 120
+        + "=== FAILURES ===\n"
+        + "___ test_reg ___\n"
+        + "tests/unit/test_regression.py:2: AssertionError\n"
+    )
+    trimmed = DeveloperAgent._trim_pytest_output(long_output, max_chars=300)
+    assert "=== FAILURES ===" in trimmed
+    assert "AssertionError" in trimmed
+
+    extra_ctx = DeveloperAgent._extract_failing_test_context(
+        trimmed, tmp_path, [{"path": "src/other.py", "content": ""}]
+    )
+    assert "tests/unit/test_regression.py" in extra_ctx
+    assert "def test_reg() -> None:" in extra_ctx
+
 
