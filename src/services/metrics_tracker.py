@@ -67,15 +67,16 @@ class MetricsTracker:
     def __init__(
         self,
         calculator: Optional[CostCalculator] = None,
-        max_records: Optional[int] = None,
+        max_records: Optional[int] = DEFAULT_MAX_RECORDS_LIMIT,
     ) -> None:
         """Inicialitza el gestor de mètriques de telemetria amb gestió de buffer circular.
 
         Args:
             calculator: Instància opcional del calculador de costos FinOps.
             max_records: Nombre màxim de registres retinguts a memòria (buffer circular).
-                Si s'indica, s'aplica una política FIFO automàtica per prevenir exhauriment
-                de memòria en execucions llargues (OWASP A04 - DoS/OOM).
+                Per defecte s'aplica `DEFAULT_MAX_RECORDS_LIMIT` (10000) per prevenir
+                riscos d'exhauriment de memòria (OWASP A04 - DoS/OOM). Es pot indicar
+                un altre enter positiu o `None` per permetre un historial sense límit.
 
         Raises:
             ValueError: Si max_records és menor o igual a zero.
