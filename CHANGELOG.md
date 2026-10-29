@@ -19,7 +19,7 @@ El format es basa en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) i 
 - **issue-7**: Resolució Issue #7 (Integració de logs estructurats i monitoratge de seguretat a src/password_reset.py per a SIEM i detecció d'intrusions)
 - **issue-21**: Resolució Issue #21 (Implementació de protecció contra concurrència atòmica (inter-procés i multi-fil) i ordenació estrictament numèrica a get_next_adr_id i materialize_adr_file.)
 - **issue-42**: Resolució Issue #42 (Afegir límit de mida màxima (max_payload_size) a validate_request i a l'AnalyticsAgent per protecció contra atacs DoS/OOM)
-- **issue-44**: Resolució Issue #44 (Optimització de rendiment a l'AnalyticsAgent reutilitzant la serialització JSON entre la validació de mida de payload i la construcció del prompt de l'usuari.)
+- **issue-31**: Resolució Issue #31 (Parametrització dels tests de validació per a camps numèrics negatius a TokenUsage mitjançant pytest.mark.parametrize.)
 
 ### Changed
 - **Sincronització Documental Autònoma al `DeveloperAgent` (`src/agents/developer_agent.py`)**: Integració de `_sync_workspace_documentation` per actualitzar `docs/reference/index.md` i `docs/adr/README.md` automàticament a cada commit d'Issue o remediació de PR.
