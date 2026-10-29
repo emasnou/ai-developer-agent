@@ -4,8 +4,8 @@ Aquest mòdul implementa la generació de tokens signats amb HMAC-SHA256, protec
 contra atacs de canal lateral (timing attacks), mitigació d'enumeració d'usuaris,
 validació estricta d'entrades (OWASP Top 10), persistència de claus mitjançant derivació
 segura scrypt, neteja controlada de memòria contra DoS, consum atòmic contra TOCTOU,
-limitació de taxa thread-safe, registre de logs estructurats per a sistemes SIEM
-i compliment estricte de les directrius NIST i OWASP.
+limitació de taxa thread-safe, registre de logs estructurats per a sistemes SIEM,
+neutralització d'atacs de Log Injection (CWE-117) i compliment de les directrius NIST i OWASP.
 """
 
 from __future__ import annotations
@@ -36,6 +36,21 @@ EMAIL_REGEX: re.Pattern[str] = re.compile(
 
 PASSWORD_MIN_LENGTH: int = 12
 PASSWORD_MAX_LENGTH: int = 128
+
+
+def sanitize_log_input(value: str) -> str:
+    """Neutralitza caràcters de control i salts de línia per prevenir Log Injection (CWE-117).
+
+    Args:
+        value: Cadena d'entrada provinent de l'usuari a sanejar.
+
+    Returns:
+        str: Cadena sense retorns de carro ni salts de línia.
+    """
+    if not isinstance(value, str):
+        return ""
+    # Eliminem salts de línia \r i \n per prevenir injecció de logs (OWASP A03 / CWE-117)
+    return value.replace("\r", "").replace("\n", "")
 
 
 def validate_email_format(email: str) -> bool:
@@ -116,7 +131,7 @@ class ResetTokenData:
 class PasswordResetTokenManager:
     """Genera, valida, invalida i purga tokens criptogràfics segurs amb expiració fixa."""
 
-    def __init__(    
+    def __init__(
         self,
         secret_key: Optional[str] = None,
         expiration_minutes: int = 15,
@@ -215,7 +230,8 @@ class PasswordResetTokenManager:
         sig = hmac.new(self._secret_key, payload_b64.encode("utf-8"), hashlib.sha256).digest()
         token_str = f"{payload_b64}.{self._b64_encode(sig)}"
 
-        self.logger.info(f"[SIEM_AUDIT] Token de restabliment generat per al correu: {email}")
+        clean_email = sanitize_log_input(email)
+        self.logger.info(f"[SIEM_AUDIT] Token de restabliment generat per al correu: {clean_email}")
         return ResetTokenData(
             token=token_str,
             email=email,
@@ -387,7 +403,8 @@ class PasswordResetTokenManager:
             raise InvalidTokenError("Dades del token incompletes.")
 
         if now_ts > exp_timestamp:
-            self.logger.warning(f"[SECURITY_EVENT] Intent de validació de token expirat per a: {email}")
+            clean_email = sanitize_log_input(email)
+            self.logger.warning(f"[SECURITY_EVENT] Intent de validació de token expirat per a: {clean_email}")
             raise ExpiredTokenError("L'enllaç ha expirat.")
 
         return email
@@ -439,7 +456,8 @@ class PasswordResetTokenManager:
             token_hash = self._token_fingerprint(token)
             self._revoked_tokens[token_hash] = exp_ts
             self._maybe_auto_purge(now_ts)
-            self.logger.info(f"[SIEM_AUDIT] Token consumit correctament per a: {email}")
+            clean_email = sanitize_log_input(email)
+            self.logger.info(f"[SIEM_AUDIT] Token consumit correctament per a: {clean_email}")
             return email
 
     def validate_token(
@@ -697,8 +715,9 @@ class RateLimiter:
 
             if len(valid_records) >= self.max_requests:
                 self._history[identifier] = valid_records
+                clean_id = sanitize_log_input(identifier)
                 self.logger.warning(
-                    f"[SECURITY_EVENT] Rate limit activat per a: '{identifier}'. Petició denegada."
+                    f"[SECURITY_EVENT] Rate limit activat per a: '{clean_id}'. Petició denegada."
                 )
                 return False
 
@@ -781,8 +800,9 @@ class PasswordResetController:
             Optional[Dict[str, Any]]: Resposta d'error 429 si se superen límits, None si és admesa.
         """
         if ip_address and not self.ip_rate_limiter.is_allowed(ip_address, current_timestamp=timestamp):
+            clean_ip = sanitize_log_input(ip_address)
             self.logger.warning(
-                f"[SECURITY_EVENT] Rate limit per IP assolit per a la IP: {ip_address}"
+                f"[SECURITY_EVENT] Rate limit per IP assolit per a la IP: {clean_ip}"
             )
             return {
                 "status_code": 429,
@@ -790,8 +810,9 @@ class PasswordResetController:
                 "message": "S'ha superat el límit de peticions permès per a la vostra adreça IP.",
             }
         if not self.rate_limiter.is_allowed(email, current_timestamp=timestamp):
+            clean_email = sanitize_log_input(email)
             self.logger.warning(
-                f"[SECURITY_EVENT] Rate limit per compte assolit per al correu: {email}"
+                f"[SECURITY_EVENT] Rate limit per compte assolit per al correu: {clean_email}"
             )
             return {
                 "status_code": 429,
@@ -817,7 +838,8 @@ class PasswordResetController:
             Dict[str, Any]: Resposta estàndard en format diccionari.
         """
         if not validate_email_format(email):
-            self.logger.warning(f"[SECURITY_EVENT] Intent de sol·licitud amb format de correu invàlid: {email}")
+            clean_email = sanitize_log_input(email)
+            self.logger.warning(f"[SECURITY_EVENT] Intent de sol·licitud amb format de correu invàlid: {clean_email}")
             return {
                 "status_code": 400,
                 "error": "Format de correu invàlid",
@@ -834,15 +856,16 @@ class PasswordResetController:
         # Generem el token incondicionalment abans de comprovar l'existència de l'usuari
         # per igualar el cost criptogràfic de CPU i evitar enumeració per temps (OWASP A07)
         token_data = self.token_manager.generate_token(normalized_email, now=now)
+        clean_email = sanitize_log_input(normalized_email)
         if self.user_repo.exists(normalized_email):
             reset_link = f"{self.base_url}{token_data.token}"
             self._dispatch_task(
                 lambda: self.email_service.send_reset_email(normalized_email, reset_link)
             )
-            self.logger.info(f"[SIEM_AUDIT] Correu de restabliment enviat a: {normalized_email}")
+            self.logger.info(f"[SIEM_AUDIT] Correu de restabliment enviat a: {clean_email}")
         else:
             self.logger.info(
-                f"[SIEM_AUDIT] Sol·licitud per a compte no existent mitiga enumeració: {normalized_email}"
+                f"[SIEM_AUDIT] Sol·licitud per a compte no existent mitiga enumeració: {clean_email}"
             )
 
         return {
@@ -921,16 +944,17 @@ class PasswordResetController:
                 "message": "No s'ha pogut canviar la contrasenya amb el token indicat.",
             }
 
+        clean_email = sanitize_log_input(email)
         updated = self.user_repo.update_password(email, new_password)
         if not updated:
-            self.logger.warning(f"[SECURITY_EVENT] Intent de restabliment per a usuari no existent a la BD: {email}")
+            self.logger.warning(f"[SECURITY_EVENT] Intent de restabliment per a usuari no existent a la BD: {clean_email}")
             return {
                 "status_code": 404,
                 "error": "Usuari no trobat",
                 "message": "No s'ha trobat cap compte d'usuari vinculat al correu del token.",
             }
 
-        self.logger.info(f"[SIEM_AUDIT] Contrasenya restablerta amb èxit per a l'usuari: {email}")
+        self.logger.info(f"[SIEM_AUDIT] Contrasenya restablerta amb èxit per a l'usuari: {clean_email}")
         return {
             "status_code": 200,
             "message": "Contrasenya actualitzada correctament.",
