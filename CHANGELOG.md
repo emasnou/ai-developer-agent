@@ -13,6 +13,7 @@ El format es basa en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) i 
 - **Plantilles Oficials de GitHub i Motor de Renderització (`.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md`, `src/utils/github_templates.py`)**: Plantilles estandarditzades per a Issues (`feature_request.md`, `improvement_recommendation.md`, `bug_report.md`) i Pull Requests integrades automàticament a `AnalystAgent`, `DeveloperAgent` i `CodeReviewAgent`.
 - **Estructura d'Architecture Decision Records (`docs/adr/`, `src/schemas/agent_schemas.py`)**: Plantilla `0000-template-adr-agent-ia.md`, model Pydantic `ArchitectureDecisionRecord` i registres fundacionals `ADR-0001` i `ADR-0002`.
 - Resolució Issue #9 (Implementació del mòdul centralitzat de registre i rotació de logs d'auditoria en format JSON per als agents, integrat amb AnalystAgent, DeveloperAgent i CodeReviewAgent, acompanyat de tests unitaris robustos basats en tmp_path i mides reduïdes.)
+- **issue-19**: Resolució Issue #19 (Implementació de la generació, numeració seqüencial i materialització automàtica d'ADRs (Architecture Decision Records) pel DeveloperAgent.)
 
 ### Changed
 - **Sincronització Documental Autònoma al `DeveloperAgent` (`src/agents/developer_agent.py`)**: Integració de `_sync_workspace_documentation` per actualitzar `docs/reference/index.md` i `docs/adr/README.md` automàticament a cada commit d'Issue o remediació de PR.

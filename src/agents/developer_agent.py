@@ -20,6 +20,7 @@ from src.prompts.developer_prompts import (
 from src.schemas.agent_schemas import DeveloperPlan
 from src.services.github_service import GitHubService
 from src.services.llm_service import LLMService
+from src.utils.adr_manager import materialize_adr_file
 from src.utils.changelog_updater import update_changelog_file
 from src.utils.doc_updater import update_all_documentation
 from src.utils.github_templates import render_pull_request_body
@@ -355,6 +356,39 @@ class DeveloperAgent(BaseAgent):
             print(f"📄 Fitxer actualitzat al Workspace: {file_item['path']}")
 
         return saved_paths
+
+    def _apply_adr_plan_if_present(
+        self, data: dict[str, Any], files_data: list[dict[str, Any]], workspace_dir: Path
+    ) -> list[dict[str, Any]]:
+        """Materialitza el registre ADR si s'ha definit una decisió d'arquitectura.
+
+        Args:
+            data: Diccionari de resposta de l'anàlisi de DeveloperPlan.
+            files_data: Llista actual de fitxers gestionats per la tasca.
+            workspace_dir: Ruta del directori aïllat del workspace.
+
+        Returns:
+            list[dict[str, Any]]: Llista actualitzada de fitxers incloent l'ADR creat.
+        """
+        adr_data = data.get("adr")
+        if not adr_data:
+            return files_data
+
+        try:
+            adr_dir = workspace_dir / "docs" / "adr"
+            created_path = materialize_adr_file(adr_data, adr_dir)
+            rel_path = created_path.relative_to(workspace_dir).as_posix()
+            content = created_path.read_text(encoding="utf-8")
+            existing_match = next((f for f in files_data if f["path"] == rel_path), None)
+            if existing_match:
+                existing_match["content"] = content
+            else:
+                files_data.append({"path": rel_path, "action": "create", "content": content})
+            self.logger.info(f"ADR materialitzat correctament al workspace: {rel_path}")
+        except Exception as exc:
+            self.logger.warning(f"No s'ha pogut materialitzar el registre ADR: {exc}")
+
+        return files_data
 
     @staticmethod
     def _build_workspace_env(workspace_dir: Path) -> dict[str, str]:
@@ -732,6 +766,8 @@ class DeveloperAgent(BaseAgent):
             return {"success": False, "attempts": 0}
 
         files_data = data.get("files", [])
+        files_data = self._apply_adr_plan_if_present(data, files_data, workspace_dir)
+
         if not files_data:
             self.logger.warning("La IA no ha especificat cap fitxer per modificar/crear.")
             shutil.rmtree(workspace_dir, ignore_errors=True)
@@ -872,4 +908,3 @@ class DeveloperAgent(BaseAgent):
             print(f"❌ Error en la remediació multi-fitxer: {e}")
             shutil.rmtree(workspace_dir, ignore_errors=True)
             return {"success": False}
-

@@ -20,6 +20,7 @@
 | `src.schemas.agent_schemas` | [`src/schemas/agent_schemas.py`](../../src/schemas/agent_schemas.py) | Esquemes de dades Pydantic per a les sortides estructurades (Structured Outputs) dels agents. | `FileItem`, `ADRAlternative`, `ArchitectureDecisionRecord`, `DeveloperPlan`, `CodeReviewResponse`, `ImprovementItem`, `ImprovementsResponse` |
 | `src.services.github_service` | [`src/services/github_service.py`](../../src/services/github_service.py) | Servei d'integració multi-repositori amb l'API de GitHub mitjançant PyGithub. | `GitHubService`, `validate_repo_name` |
 | `src.services.llm_service` | [`src/services/llm_service.py`](../../src/services/llm_service.py) | Servei de comunicació resilient amb l'API de Google Gemini. | `LLMService` |
+| `src.utils.adr_manager` | [`src/utils/adr_manager.py`](../../src/utils/adr_manager.py) | Mòdul per a la gestió, numeració seqüencial i materialització d'ADRs. | `slugify_title`, `get_next_adr_id`, `build_adr_filename`, `materialize_adr_file` |
 | `src.utils.changelog_updater` | [`src/utils/changelog_updater.py`](../../src/utils/changelog_updater.py) | Mòdul d'automatització i validació per mantenir actualitzat el fitxer CHANGELOG.md. | `classify_commit_message`, `group_commits_by_category`, `update_changelog_content`, `release_unreleased_content`, `get_recent_git_commits`, `update_changelog_file`, `main` |
 | `src.utils.config` | [`src/utils/config.py`](../../src/utils/config.py) | Mòdul de configuració i càrrega segura de variables d'entorn. | `AppConfig`, `parse_repo_list` |
 | `src.utils.doc_updater` | [`src/utils/doc_updater.py`](../../src/utils/doc_updater.py) | Motor d'actualització i verificació automàtica de la documentació tècnica (Docs-as-Code). | `ModuleDocInfo`, `AdrEntry`, `inspect_python_module`, `scan_source_modules`, `validate_docstrings_and_types`, `generate_reference_markdown`, `extract_adr_metadata`, `build_adr_index_table`, `sync_adr_index`, `update_all_documentation`, `main` |
@@ -114,6 +115,13 @@
 - **Resum:** Servei de comunicació resilient amb l'API de Google Gemini.
 
 ::: src.services.llm_service
+
+### `src.utils.adr_manager`
+
+- **Fitxer font:** [`src/utils/adr_manager.py`](../../src/utils/adr_manager.py)
+- **Resum:** Mòdul per a la gestió, numeració seqüencial i materialització d'ADRs.
+
+::: src.utils.adr_manager
 
 ### `src.utils.changelog_updater`
 
