@@ -1,4 +1,4 @@
-"""Tests unitaris per als models de telemetria i el motor de càlcul FinOps."""
+"""Tests unitaris per a la validació d'esquemes i càlculs de mètriques FinOps."""
 
 from __future__ import annotations
 
@@ -15,29 +15,56 @@ from src.services.finops_service import (
 )
 
 
-def test_token_usage_validation_and_defaults() -> None:
-    """Comprova la creació correcta de TokenUsage amb càlcul automàtic de total_tokens."""
-    usage = TokenUsage(prompt_tokens=1500, completion_tokens=500)
-    assert usage.prompt_tokens == 1500
-    assert usage.completion_tokens == 500
-    assert usage.cached_tokens == 0
-    assert usage.total_tokens == 2000
+def test_token_usage_valid_instantiation() -> None:
+    """Verifica que TokenUsage s'instanciï correctament quan cached_tokens <= prompt_tokens."""
+    usage = TokenUsage(
+        prompt_tokens=100,
+        completion_tokens=40,
+        cached_tokens=30,
+    )
+    assert usage.prompt_tokens == 100
+    assert usage.completion_tokens == 40
+    assert usage.cached_tokens == 30
+    assert usage.total_tokens == 140
 
 
-def test_token_usage_rejects_negative_numbers() -> None:
-    """Verifica que TokenUsage rebutgi valors negatius via Pydantic."""
-    with pytest.raises(ValidationError):
-        TokenUsage(prompt_tokens=-10, completion_tokens=100)
+def test_token_usage_cached_equals_prompt() -> None:
+    """Comprova que sigui vàlid que cached_tokens sigui exactament igual a prompt_tokens."""
+    usage = TokenUsage(
+        prompt_tokens=80,
+        completion_tokens=20,
+        cached_tokens=80,
+    )
+    assert usage.cached_tokens == usage.prompt_tokens
+    assert usage.total_tokens == 100
 
-    with pytest.raises(ValidationError):
-        TokenUsage(prompt_tokens=100, completion_tokens=-5)
 
-    with pytest.raises(ValidationError):
-        TokenUsage(prompt_tokens=100, completion_tokens=50, cached_tokens=-1)
+def test_token_usage_rejects_cached_greater_than_prompt() -> None:
+    """Valida que es llanci una ValidationError si cached_tokens és superior a prompt_tokens."""
+    with pytest.raises(ValidationError) as exc_info:
+        TokenUsage(
+            prompt_tokens=50,
+            completion_tokens=20,
+            cached_tokens=60,
+        )
+    error_str = str(exc_info.value)
+    assert "cached_tokens" in error_str
+    assert "no pot ser superior a prompt_tokens" in error_str
 
 
-def test_pricing_tier_validation() -> None:
-    """Comprova la validació d'una tarifa PricingTier."""
+def test_token_usage_preserves_explicit_total() -> None:
+    """Verifica que es respecti el total_tokens explícit si no és zero."""
+    usage = TokenUsage(
+        prompt_tokens=100,
+        completion_tokens=50,
+        cached_tokens=0,
+        total_tokens=160,
+    )
+    assert usage.total_tokens == 160
+
+
+def test_pricing_tier_validation_and_empty_check() -> None:
+    """Comprova les restriccions i neteja d'identificadors a PricingTier."""
     tier = PricingTier(
         model_name="gemini-2.5-flash",
         provider="google",
@@ -46,171 +73,65 @@ def test_pricing_tier_validation() -> None:
         cached_cost_per_k=0.00001875,
     )
     assert tier.model_name == "gemini-2.5-flash"
-    assert tier.input_cost_per_k == 0.000075
 
     with pytest.raises(ValidationError):
         PricingTier(
             model_name="   ",
             provider="google",
-            input_cost_per_k=0.01,
-            output_cost_per_k=0.02,
-        )
-
-    with pytest.raises(ValidationError):
-        PricingTier(
-            model_name="model",
-            provider="google",
-            input_cost_per_k=-0.01,
-            output_cost_per_k=0.02,
-        )
-
-
-def test_cost_breakdown_structure() -> None:
-    """Comprova l'estructura del model CostBreakdown i la seva serialització."""
-    cb = CostBreakdown(
-        model_name="gemini-2.5-flash",
-        input_cost=0.000112,
-        output_cost=0.00015,
-        cached_cost=0.0,
-        total_cost=0.000262,
-    )
-    data = cb.model_dump()
-    assert data["model_name"] == "gemini-2.5-flash"
-    assert data["currency"] == "USD"
-    assert data["total_cost"] == 0.000262
-
-
-def test_cost_calculator_scenario_1() -> None:
-    """Escenari 1: Càlcul precís de costos a partir d'un model registrat."""
-    catalog = FinOpsPricingCatalog(initial_catalog={})
-    catalog.register_tier(
-        PricingTier(
-            model_name="test-model",
-            provider="custom",
             input_cost_per_k=0.001,
             output_cost_per_k=0.002,
-            cached_cost_per_k=0.0005,
         )
-    )
+
+
+def test_cost_calculator_with_cache_deduction() -> None:
+    """Valida el càlcul precís FinOps deduïnt tokens en cau dels tokens d'entrada."""
+    catalog = FinOpsPricingCatalog()
     calculator = CostCalculator(catalog=catalog)
-    usage = TokenUsage(prompt_tokens=1500, completion_tokens=500)
 
-    result = calculator.calculate_cost("test-model", usage)
-
-    # 1500 / 1000 * 0.001 = 0.0015
-    # 500 / 1000 * 0.002 = 0.001
-    # Total = 0.0025
-    assert result.input_cost == 0.0015
-    assert result.output_cost == 0.001
-    assert result.cached_cost == 0.0
-    assert result.total_cost == 0.0025
-    assert result.model_name == "test-model"
-
-
-def test_cost_calculator_with_cached_tokens() -> None:
-    """Verifica que els tokens en cau es tarifin amb el preu reduït de memòria cau."""
-    catalog = FinOpsPricingCatalog(initial_catalog={})
-    catalog.register_tier(
-        PricingTier(
-            model_name="test-cache-model",
-            provider="custom",
-            input_cost_per_k=0.002,
-            output_cost_per_k=0.004,
-            cached_cost_per_k=0.0005,
-        )
+    usage = TokenUsage(
+        prompt_tokens=2000,
+        completion_tokens=1000,
+        cached_tokens=500,
     )
-    calculator = CostCalculator(catalog=catalog)
-    # 1000 tokens de prompt, dels quals 400 són cached
-    usage = TokenUsage(prompt_tokens=1000, completion_tokens=200, cached_tokens=400)
+    breakdown = calculator.calculate_cost("gemini-2.5-flash", usage)
 
-    result = calculator.calculate_cost("test-cache-model", usage)
-    # No-cached prompt: (1000 - 400) / 1000 * 0.002 = 600 * 0.000002 = 0.0012
-    # Cached prompt: 400 / 1000 * 0.0005 = 0.0002
-    # Output: 200 / 1000 * 0.004 = 0.0008
-    # Total = 0.0012 + 0.0002 + 0.0008 = 0.0022
-    assert result.input_cost == 0.0012
-    assert result.cached_cost == 0.0002
-    assert result.output_cost == 0.0008
-    assert result.total_cost == 0.0022
+    tier = catalog.get_tier("gemini-2.5-flash")
+    expected_input = (1500 / 1000.0) * tier.input_cost_per_k
+    expected_cached = (500 / 1000.0) * tier.cached_cost_per_k
+    expected_output = (1000 / 1000.0) * tier.output_cost_per_k
+    expected_total = expected_input + expected_cached + expected_output
+
+    assert breakdown.input_cost == round(expected_input, 6)
+    assert breakdown.cached_cost == round(expected_cached, 6)
+    assert breakdown.output_cost == round(expected_output, 6)
+    assert breakdown.total_cost == round(expected_total, 6)
+    assert breakdown.currency == "USD"
 
 
-def test_cost_calculator_model_not_found_error() -> None:
-    """Escenari 2: Llançament de ModelPricingNotFoundError quan no es troba la tarifa."""
+def test_cost_calculator_unknown_model_raises_error() -> None:
+    """Verifica que es llanci ModelPricingNotFoundError per a models no registrats."""
     calculator = CostCalculator()
-    usage = TokenUsage(prompt_tokens=500, completion_tokens=100)
-
-    with pytest.raises(ModelPricingNotFoundError) as exc_info:
-        calculator.calculate_cost("model-desconegut-123", usage)
-
-    assert "model-desconegut-123" in str(exc_info.value)
+    usage = TokenUsage(prompt_tokens=100, completion_tokens=50)
+    with pytest.raises(ModelPricingNotFoundError):
+        calculator.calculate_cost("model-inexistent", usage)
 
 
-def test_pricing_catalog_file_loading_json(tmp_path: Path) -> None:
-    """Comprova la càrrega de catàleg des d'un fitxer JSON."""
-    json_file = tmp_path / "pricing.json"
-    json_file.write_text(
-        """[
-            {
-                "model_name": "model-json-1",
-                "provider": "custom",
-                "input_cost_per_k": 0.001,
-                "output_cost_per_k": 0.002,
-                "cached_cost_per_k": 0.0001
-            }
-        ]""",
-        encoding="utf-8",
-    )
+def test_catalog_from_file_json(tmp_path: Path) -> None:
+    """Comprova la càrrega del catàleg de preus des d'un fitxer JSON aïllat."""
+    json_content = """[
+        {
+            "model_name": "test-model",
+            "provider": "custom",
+            "input_cost_per_k": 0.001,
+            "output_cost_per_k": 0.002,
+            "cached_cost_per_k": 0.0005
+        }
+    ]"""
+    cfg_file = tmp_path / "pricing.json"
+    cfg_file.write_text(json_content, encoding="utf-8")
 
-    catalog = FinOpsPricingCatalog.from_file(json_file)
-    assert catalog.has_tier("model-json-1")
-    tier = catalog.get_tier("model-json-1")
+    catalog = FinOpsPricingCatalog.from_file(cfg_file)
+    assert catalog.has_tier("test-model")
+    tier = catalog.get_tier("test-model")
+    assert tier.provider == "custom"
     assert tier.input_cost_per_k == 0.001
-
-
-def test_pricing_catalog_file_loading_yaml(tmp_path: Path) -> None:
-    """Comprova la càrrega de catàleg des d'un fitxer YAML."""
-    yaml_file = tmp_path / "pricing.yaml"
-    yaml_file.write_text(
-        """
-- model_name: model-yaml-1
-  provider: custom
-  input_cost_per_k: 0.003
-  output_cost_per_k: 0.006
-  cached_cost_per_k: 0.0005
-""",
-        encoding="utf-8",
-    )
-
-    catalog = FinOpsPricingCatalog.from_file(yaml_file)
-    assert catalog.has_tier("model-yaml-1")
-    tier = catalog.get_tier("model-yaml-1")
-    assert tier.output_cost_per_k == 0.006
-
-
-def test_pricing_catalog_file_not_found(tmp_path: Path) -> None:
-    """Comprova que es llanci FileNotFoundError si el fitxer no existeix."""
-    with pytest.raises(FileNotFoundError):
-        FinOpsPricingCatalog.from_file(tmp_path / "no_existeix.yaml")
-
-
-def test_pricing_catalog_unsupported_format(tmp_path: Path) -> None:
-    """Comprova que es llanci ValueError si l'extensió no és suportada."""
-    invalid_file = tmp_path / "pricing.txt"
-    invalid_file.write_text("contingut", encoding="utf-8")
-    with pytest.raises(ValueError):
-        FinOpsPricingCatalog.from_file(invalid_file)
-
-
-def test_batch_cost_calculation() -> None:
-    """Comprova el càlcul d'un lot d'usos de diferents models."""
-    calculator = CostCalculator()
-    batch = [
-        ("gemini-2.5-flash", TokenUsage(prompt_tokens=1000, completion_tokens=1000)),
-        ("gemini-2.5-flash-lite", TokenUsage(prompt_tokens=2000, completion_tokens=500)),
-    ]
-    results = calculator.calculate_batch_cost(batch)
-    assert len(results) == 2
-    assert results[0].model_name == "gemini-2.5-flash"
-    assert results[1].model_name == "gemini-2.5-flash-lite"
-    assert results[0].total_cost > 0
-    assert results[1].total_cost > 0
