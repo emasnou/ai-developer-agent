@@ -61,8 +61,8 @@ class AnalyticsAgent(BaseAgent):
     ) -> str:
         """Calcula la mida del payload serialitzat i valida que no superi el límit permès.
 
-        Serialitza el payload en format JSON i emmagatzema el text resultant a la memòria cau
-        interna per evitar dobles serialitzacions costoses durant la construcció del prompt.
+        Serialitza el payload en format JSON i retorna el text resultant per
+        a la seva reutilització encapsulada a la petició individual.
 
         Args:
             data_payload: Dades estructurades a inspeccionar.
@@ -89,7 +89,6 @@ class AnalyticsAgent(BaseAgent):
                 f"de {max_allowed_bytes} bytes."
             )
 
-        self._cached_serialized_payload = serialized
         return serialized
 
     def validate_request(
@@ -100,13 +99,16 @@ class AnalyticsAgent(BaseAgent):
     ) -> AnalyticsQuery:
         """Valida la coherència, format i mida màxima de la petició analítica.
 
+        Encapsula el payload serialitzat directament dins de l'objecte `AnalyticsQuery`
+        per garantir una execució concurrent i thread-safe sense estat mutable compartit.
+
         Args:
             query: Objecte `AnalyticsQuery` o text en llenguatge natural.
             data: Dades a analitzar si `query` s'introdueix com a text.
             max_payload_size: Llindar de mida màxima en bytes opcional per sobreescriure el límit.
 
         Returns:
-            AnalyticsQuery: Petició validada i estructurada.
+            AnalyticsQuery: Petició validada i estructurada amb la memòria cau encapsulada.
 
         Raises:
             AnalyticsValidationError: Si falten dades, el format és invàlid o se supera el límit.
@@ -116,7 +118,8 @@ class AnalyticsAgent(BaseAgent):
         )
 
         if isinstance(query, AnalyticsQuery):
-            self._check_payload_size(query.data_payload, effective_limit)
+            serialized = self._check_payload_size(query.data_payload, effective_limit)
+            query.set_cached_payload(serialized)
             return query
 
         if not isinstance(query, str) or not query.strip():
@@ -137,11 +140,15 @@ class AnalyticsAgent(BaseAgent):
         if not data:
             raise AnalyticsValidationError("El conjunt de dades proporcionat és buit.")
 
-        self._check_payload_size(data, effective_limit)
+        serialized = self._check_payload_size(data, effective_limit)
 
         try:
-            return AnalyticsQuery(query=query.strip(), data_payload=data)
+            validated_query = AnalyticsQuery(query=query.strip(), data_payload=data)
+            validated_query.set_cached_payload(serialized)
+            return validated_query
         except Exception as err:
+            if isinstance(err, AnalyticsValidationError):
+                raise
             raise AnalyticsValidationError(
                 f"Error de validació de la sol·licitud: {err}"
             ) from err
@@ -153,8 +160,8 @@ class AnalyticsAgent(BaseAgent):
     ) -> str:
         """Construeix el prompt que es transmetrà al model de llenguatge.
 
-        Reutilitza la cadena serialitzada de la memòria cau interna o paràmetre per
-        estalviar cicles de CPU i memòria en càrregues volumètriques grans.
+        Reutilitza la cadena serialitzada de la petició individual o del paràmetre per
+        estalviar cicles de CPU i memòria en càrregues volumètriques grans de forma thread-safe.
 
         Args:
             request: Objecte `AnalyticsQuery` amb la consulta i el payload de dades.
@@ -165,8 +172,8 @@ class AnalyticsAgent(BaseAgent):
         """
         if serialized_payload is not None:
             payload_text = serialized_payload
-        elif self._cached_serialized_payload is not None:
-            payload_text = self._cached_serialized_payload
+        elif request.get_cached_payload() is not None:
+            payload_text = request.get_cached_payload() or ""
         else:
             payload_text = json.dumps(request.data_payload, ensure_ascii=False, indent=2)
 
@@ -246,11 +253,9 @@ class AnalyticsAgent(BaseAgent):
         request = self.validate_request(query, data, max_payload_size=max_payload_size)
         self.logger.info(f"Iniciant anàlisi per a la consulta: '{request.query}'")
 
-        user_prompt = self._build_user_prompt(
-            request, serialized_payload=self._cached_serialized_payload
-        )
-        # Alliberem la memòria cau un cop generat el prompt per prevenir fuites de memòria (OWASP A04)
-        self._cached_serialized_payload = None
+        user_prompt = self._build_user_prompt(request)
+        # Alliberem la memòria cau encapsulada a la petició un cop generat el prompt (OWASP A04)
+        request.set_cached_payload(None)
 
         try:
             raw_response = self.llm.generate_task_spec(
