@@ -22,6 +22,7 @@ El format es basa en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) i 
 - **issue-31**: Resolució Issue #31 (Parametrització dels tests de validació per a camps numèrics negatius a TokenUsage mitjançant pytest.mark.parametrize.)
 - **issue-33**: Resolució Issue #33 (Implementació d'un límit configurable de registres històrics amb buffer circular (collections.deque) i purga periòdica a MetricsTracker per garantir un consum constant de memòria (OWASP A04 - DoS/OOM).)
 - **issue-35**: Resolució Issue #35 (Implementat el sanejament d'entrades per prevenir Log Injection (CWE-117) al registre d'auditoria de restabliment de contrasenyes.)
+- **issue-36**: Resolució Issue #36 (Ajustada la longitud de línia dels missatges de logging a src/password_reset.py per complir estrictament el llindar de 100 caràcters de PEP 8 i Ruff, i actualitzats els tests a tests/unit/test_password_reset_logging.py.)
 
 ### Changed
 - **Sincronització Documental Autònoma al `DeveloperAgent` (`src/agents/developer_agent.py`)**: Integració de `_sync_workspace_documentation` per actualitzar `docs/reference/index.md` i `docs/adr/README.md` automàticament a cada commit d'Issue o remediació de PR.
