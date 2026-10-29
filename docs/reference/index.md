@@ -8,7 +8,7 @@
 
 | Mòdul | Fitxer | Responsabilitat Principal | Elements Públics |
 | :--- | :--- | :--- | :--- |
-| `src.agents.analyst_agent` | [`src/agents/analyst_agent.py`](../../src/agents/analyst_agent.py) | Agent Analista encarregat de transformar requeriments funcionals en Issues de GitHub. | `AnalystAgent` |
+| `src.agents.analyst_agent` | [`src/agents/analyst_agent.py`](../../src/agents/analyst_agent.py) | Agent Analista encarregat de transformar requeriments funcionals en una o múltiples Issues de GitHub. | `AnalystAgent` |
 | `src.agents.base_agent` | [`src/agents/base_agent.py`](../../src/agents/base_agent.py) | Classe base comuna per a tots els agents d'IA del sistema. | `BaseAgent` |
 | `src.agents.code_review_agent` | [`src/agents/code_review_agent.py`](../../src/agents/code_review_agent.py) | Agent CodeReview per auditar la qualitat del codi, el rendiment i la seguretat (OWASP Top 10). | `CodeReviewAgent` |
 | `src.agents.developer_agent` | [`src/agents/developer_agent.py`](../../src/agents/developer_agent.py) | Agent Desenvolupador per a la generació, validació amb PyTest i remediació de codi en workspaces aïllats. | `DeveloperAgent` |
@@ -17,7 +17,7 @@
 | `src.prompts.analyst_prompts` | [`src/prompts/analyst_prompts.py`](../../src/prompts/analyst_prompts.py) | Plantilles de prompts de sistema per a l'Agent Analista (`AnalystAgent`). | `build_analyst_system_prompt` |
 | `src.prompts.developer_prompts` | [`src/prompts/developer_prompts.py`](../../src/prompts/developer_prompts.py) | Plantilles de prompts de sistema, auto-correcció i remediació per a l'Agent Desenvolupador (`DeveloperAgent`). | *(Mòdul de constants)* |
 | `src.prompts.review_prompts` | [`src/prompts/review_prompts.py`](../../src/prompts/review_prompts.py) | Plantilles de prompts per a l'auditoria de codi i l'extracció de millores (`CodeReviewAgent`). | *(Mòdul de constants)* |
-| `src.schemas.agent_schemas` | [`src/schemas/agent_schemas.py`](../../src/schemas/agent_schemas.py) | Esquemes de dades Pydantic per a les sortides estructurades (Structured Outputs) dels agents. | `FileItem`, `ADRAlternative`, `ArchitectureDecisionRecord`, `DeveloperPlan`, `CodeReviewResponse`, `ImprovementItem`, `ImprovementsResponse` |
+| `src.schemas.agent_schemas` | [`src/schemas/agent_schemas.py`](../../src/schemas/agent_schemas.py) | Esquemes de dades Pydantic per a les sortides estructurades (Structured Outputs) dels agents. | `FileItem`, `ADRAlternative`, `ArchitectureDecisionRecord`, `DeveloperPlan`, `CodeReviewResponse`, `ImprovementItem`, `ImprovementsResponse`, `AnalystStoryItem`, `AnalystPlan` |
 | `src.services.github_service` | [`src/services/github_service.py`](../../src/services/github_service.py) | Servei d'integració multi-repositori amb l'API de GitHub mitjançant PyGithub. | `GitHubService`, `validate_repo_name` |
 | `src.services.llm_service` | [`src/services/llm_service.py`](../../src/services/llm_service.py) | Servei de comunicació resilient amb l'API de Google Gemini. | `LLMService` |
 | `src.utils.adr_manager` | [`src/utils/adr_manager.py`](../../src/utils/adr_manager.py) | Mòdul per a la gestió, numeració seqüencial i materialització d'ADRs. | `slugify_title`, `get_next_adr_id`, `build_adr_filename`, `materialize_adr_file` |
@@ -35,7 +35,7 @@
 ### `src.agents.analyst_agent`
 
 - **Fitxer font:** [`src/agents/analyst_agent.py`](../../src/agents/analyst_agent.py)
-- **Resum:** Agent Analista encarregat de transformar requeriments funcionals en Issues de GitHub.
+- **Resum:** Agent Analista encarregat de transformar requeriments funcionals en una o múltiples Issues de GitHub.
 
 ::: src.agents.analyst_agent
 

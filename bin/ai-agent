@@ -143,7 +143,13 @@ if title and desc:
     service = GitHubService(require_repo=True)
     agent = AnalystAgent(github_service=service, repo_name=service.active_repo_name)
     res = agent.process_requirement_and_create_issue(desc, title)
-    print(f"✅ Issue creada a {service.active_repo_name}: {res[\x27url\x27]}")
+    if res.get("multi_story"):
+        print(f"✅ S\x27han creat {res[\x27stories_count\x27]} Stories seqüencials a {service.active_repo_name}:")
+        print(f"💡 Justificació: {res.get(\x27decomposition_rationale\x27, \x27\x27)}")
+        print("\n🧭 Seqüència recomanada per a l\x27execució de les Stories:")
+        print(res.get("recommended_sequence_text", ""))
+    else:
+        print(f"✅ Issue creada a {service.active_repo_name}: {res[\x27url\x27]}")
 else:
     handle_analyst_option()
 ' "${ISSUE_TITLE}" "${ISSUE_DESC}"

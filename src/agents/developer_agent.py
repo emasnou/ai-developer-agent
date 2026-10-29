@@ -80,6 +80,123 @@ class DeveloperAgent(BaseAgent):
             return "default_repo"
         return repo_name.strip().replace("/", "__")
 
+    @staticmethod
+    def extract_issue_dependencies(issue_body: Optional[str]) -> list[int]:
+        """Extreu els números de les Stories/Issues prèvies de les quals depèn una Issue.
+
+        Analitza la secció de dependències del cos Markdown generat per l'Analista
+        (p.ex. `- **Dependències Prèvies:** Issue #101 ...`) o declaracions explícites
+        (`Depèn de: #10`, `Depends on: #10`).
+
+        Args:
+            issue_body: Contingut en Markdown del cos de la Issue de GitHub.
+
+        Returns:
+            list[int]: Llista ordenada i sense duplicats dels IDs d'Issues prèvies requerides.
+        """
+        if not issue_body or not isinstance(issue_body, str):
+            return []
+
+        dep_numbers: list[int] = []
+        pattern = re.compile(
+            r"(?im)^\s*(?:[-*]\s*)?\**(?:depend[èe]ncies(?:\s+pr[èe]vies)?|"
+            r"dep[èe]n\s+de|depends\s+on|blocked\s+by)\**\s*:\s*\**\s*([^\n]+)"
+        )
+        for match in pattern.finditer(issue_body):
+            line_value = match.group(1).strip()
+            if re.match(r"^(?:cap|none|n/a)\b", line_value, flags=re.IGNORECASE):
+                continue
+            for num_str in re.findall(r"(?<!Pas\s)#(\d+)\b", line_value, flags=re.IGNORECASE):
+                num = int(num_str)
+                if num > 0 and num not in dep_numbers:
+                    dep_numbers.append(num)
+        return dep_numbers
+
+    @classmethod
+    def resolve_dependency_status(
+        cls, issue: Any, open_issues: list[Any]
+    ) -> dict[str, Any]:
+        """Avalua si una Story té dependències pendents respecte a les Issues encara obertes.
+
+        Si una Story depèn d'una altra que al seu torn depèn d'una anterior, recorre
+        la cadena de dependències per identificar quina és la primera Story que cal
+        desenvolupar.
+
+        Args:
+            issue: Objecte Issue seleccionat per desenvolupar.
+            open_issues: Llista d'objectes Issue actualment oberts al repositori.
+
+        Returns:
+            dict[str, Any]: Diccionari amb `dependencies` (`list[int]`),
+                `pending_dependencies` (`list[int]`), `is_blocked` (`bool`) i
+                `first_required_issue` (`Optional[Any]`).
+        """
+        current_num = getattr(issue, "number", None)
+        open_by_num: dict[int, Any] = {
+            getattr(iss, "number"): iss
+            for iss in open_issues
+            if getattr(iss, "number", None) is not None
+        }
+        all_deps = [
+            d
+            for d in cls.extract_issue_dependencies(getattr(issue, "body", None))
+            if d != current_num
+        ]
+        pending_deps = [d for d in all_deps if d in open_by_num]
+
+        first_required: Optional[Any] = None
+        if pending_deps:
+            visited: set[int] = set()
+            cursor_num = pending_deps[0]
+            while cursor_num in open_by_num and cursor_num not in visited:
+                visited.add(cursor_num)
+                candidate_issue = open_by_num[cursor_num]
+                first_required = candidate_issue
+                sub_deps = [
+                    d
+                    for d in cls.extract_issue_dependencies(
+                        getattr(candidate_issue, "body", None)
+                    )
+                    if d != cursor_num and d in open_by_num and d not in visited
+                ]
+                if not sub_deps:
+                    break
+                cursor_num = sub_deps[0]
+
+        return {
+            "dependencies": all_deps,
+            "pending_dependencies": pending_deps,
+            "is_blocked": bool(pending_deps),
+            "first_required_issue": first_required,
+        }
+
+    @classmethod
+    def format_issue_dependency_badge(cls, issue: Any, open_issues: list[Any]) -> str:
+        """Formata l'etiqueta informativa de dependències per mostrar al menú de selecció.
+
+        Args:
+            issue: Objecte Issue a mostrar al menú.
+            open_issues: Llista de totes les Issues obertes al repositori.
+
+        Returns:
+            str: Text descriptiu amb la dependència i l'estat (pendent o llista per desenvolupar).
+        """
+        status = cls.resolve_dependency_status(issue, open_issues)
+        all_deps: list[int] = status["dependencies"]
+        pending_deps: list[int] = status["pending_dependencies"]
+        first_req = status["first_required_issue"]
+
+        if not all_deps:
+            return " [🔗 Dependències: Cap — ✅ Llista per desenvolupar]"
+
+        deps_str = ", ".join(f"#{d}" for d in all_deps)
+        if pending_deps:
+            first_num = getattr(first_req, "number", pending_deps[0])
+            return (
+                f" [🔗 Depèn de: {deps_str} — ⏳ Bloquejada: cal desenvolupar primer #{first_num}]"
+            )
+        return f" [🔗 Depèn de: {deps_str} — ✅ Dependències completades]"
+
     def _parse_json_response(self, text: str) -> dict[str, Any]:
         """Extreu i normalitza el pla de fitxers JSON/YAML de la resposta del LLM.
 
@@ -726,6 +843,38 @@ class DeveloperAgent(BaseAgent):
         self.logger.info(f"Iniciant desenvolupament automàtic per a la Issue #{issue_number}")
         print(f"\n🤖 [DeveloperAgent] Carregant la Issue #{issue_number} des de GitHub...")
         issue = self.github.get_issue(issue_number)
+
+        raw_deps = self.extract_issue_dependencies(getattr(issue, "body", None))
+        if raw_deps and hasattr(self.github, "get_open_issues"):
+            open_issues = self.github.get_open_issues()
+            if isinstance(open_issues, list):
+                dep_status = self.resolve_dependency_status(issue, open_issues)
+                if dep_status["is_blocked"]:
+                    first_req = dep_status["first_required_issue"]
+                    first_req_num = getattr(
+                        first_req, "number", dep_status["pending_dependencies"][0]
+                    )
+                    first_req_title = getattr(first_req, "title", f"Issue #{first_req_num}")
+                    pending_str = ", ".join(f"#{d}" for d in dep_status["pending_dependencies"])
+                    self.logger.warning(
+                        f"La Issue #{issue_number} té dependències obertes pendents ({pending_str}). "
+                        f"Cal desenvolupar primer la Issue #{first_req_num}."
+                    )
+                    print(
+                        f"\n⛔ [DeveloperAgent] No es pot desenvolupar la Story #{issue_number} "
+                        f"perquè té dependències pendents ({pending_str})."
+                    )
+                    print(
+                        f"👉 Cal desenvolupar primer la Story #{first_req_num}: '{first_req_title}'."
+                    )
+                    return {
+                        "success": False,
+                        "attempts": 0,
+                        "blocked_by_dependencies": True,
+                        "pending_dependencies": dep_status["pending_dependencies"],
+                        "first_required_issue": first_req_num,
+                    }
+
         default_branch = self._resolve_default_branch()
 
         workspace_dir = self._prepare_workspace_environment(issue_number)

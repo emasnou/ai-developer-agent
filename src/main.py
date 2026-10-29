@@ -170,13 +170,39 @@ def handle_analyst_option(github_service: Optional[GitHubService] = None) -> Non
 
         analyst = AnalystAgent(github_service=service, repo_name=service.active_repo_name)
         resultat = analyst.process_requirement_and_create_issue(user_requirement, issue_title)
-        print(f"\n✅ Issue creada amb èxit a '{service.active_repo_name}': {resultat['url']}")
+        if resultat.get("multi_story"):
+            print(
+                f"\n✅ S'han creat {resultat['stories_count']} Stories seqüencials "
+                f"a '{service.active_repo_name}':"
+            )
+            print(f"💡 Justificació: {resultat.get('decomposition_rationale', '')}")
+            print("\n🧭 Seqüència recomanada per a l'execució de les Stories:")
+            print(resultat.get("recommended_sequence_text", ""))
+        else:
+            print(f"\n✅ Issue creada amb èxit a '{service.active_repo_name}': {resultat['url']}")
     except Exception as e:
         print(f"\n❌ Error durant el procés de creació de la Issue: {e}")
 
 
+def _print_open_issues_menu(open_issues: list[Any], repo_name: Optional[str]) -> None:
+    """Imprimeix per pantalla el menú d'Issues obertes amb les seves dependències.
+
+    Args:
+        open_issues: Llista d'objectes Issue oberts al repositori.
+        repo_name: Nom del repositori actiu.
+    """
+    print(f"\n📋 Llista de les Issues obertes a '{repo_name}':\n")
+    for issue in open_issues:
+        dep_badge = DeveloperAgent.format_issue_dependency_badge(issue, open_issues)
+        print(f"  [#{issue.number}] - {issue.title}  {dep_badge}")
+
+
 def _prompt_issue_selection(open_issues: list[Any], repo_name: Optional[str]) -> Optional[int]:
-    """Mostra les Issues obertes i demana a l'usuari seleccionar-ne una per ID.
+    """Mostra les Issues obertes amb les seves dependències i demana seleccionar-ne una.
+
+    Si l'usuari tria una Story amb dependències pendents en altres Stories obertes,
+    avisa que no es pot desenvolupar, indica quina Story cal desenvolupar primer
+    i torna al menú de selecció d'Story.
 
     Args:
         open_issues: Llista d'objectes Issue oberts al repositori.
@@ -185,10 +211,8 @@ def _prompt_issue_selection(open_issues: list[Any], repo_name: Optional[str]) ->
     Returns:
         Optional[int]: Número de la Issue escollida o None si l'usuari cancel·la.
     """
-    print(f"\n📋 Llista de les Issues obertes a '{repo_name}':\n")
     issues_dict = {issue.number: issue for issue in open_issues}
-    for issue in open_issues:
-        print(f"  [#{issue.number}] - {issue.title}")
+    _print_open_issues_menu(open_issues, repo_name)
 
     while True:
         user_input = input(
@@ -204,6 +228,25 @@ def _prompt_issue_selection(open_issues: list[Any], repo_name: Optional[str]) ->
         if num not in issues_dict:
             print(f"⚠️ El número #{num} no correspon a cap Issue oberta de la llista.")
             continue
+
+        selected_issue = issues_dict[num]
+        dep_status = DeveloperAgent.resolve_dependency_status(selected_issue, open_issues)
+        if dep_status["is_blocked"]:
+            first_req = dep_status["first_required_issue"]
+            first_req_num = getattr(first_req, "number", dep_status["pending_dependencies"][0])
+            first_req_title = getattr(first_req, "title", f"Story #{first_req_num}")
+            pending_str = ", ".join(f"#{d}" for d in dep_status["pending_dependencies"])
+            print(
+                f"\n⛔ No es pot desenvolupar la Story #{num} ('{selected_issue.title}') "
+                f"perquè té dependències pendents amb altres Stories ({pending_str})."
+            )
+            print(
+                f"👉 Cal desenvolupar primer la Story #{first_req_num}: '{first_req_title}'."
+            )
+            print("🔄 Tornant al menú de selecció de Stories...")
+            _print_open_issues_menu(open_issues, repo_name)
+            continue
+
         return num
 
 

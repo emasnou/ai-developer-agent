@@ -223,3 +223,184 @@ def test_render_improvement_issue_body_without_explicit_split() -> None:
     assert "Cal afegir validació d'esquema addicional." in rendered
     assert "Refactoritzar `src/main.py`" in rendered
 
+
+def test_analyst_agent_decomposes_multi_story_with_sequential_order() -> None:
+    """Verifica que AnalystAgent descompon un requeriment complex en múltiples Stories seqüencials i tancades."""
+    import json
+
+    multi_story_payload = {
+        "requires_multiple_stories": True,
+        "decomposition_rationale": (
+            "Es divideix en 2 Stories seqüencials per separar el model de dades "
+            "de la lògica d'integració CLI, garantint que cada pas compili i passi PyTest."
+        ),
+        "execution_sequence_summary": (
+            "1r crear esquemes i validadors amb els seus tests unitaris -> "
+            "2n integrar el servei i el menú CLI sobre els esquemes ja validats."
+        ),
+        "stories": [
+            {
+                "execution_order": 2,
+                "title": "Integració al menú CLI",
+                "body": "## 📝 Descripció i Història d'Usuari\nIntegrar el comandament al CLI.",
+                "depends_on_orders": [1],
+                "deliverable_summary": "Comandament CLI operatiu amb tests unitaris de flux.",
+            },
+            {
+                "execution_order": 1,
+                "title": "Esquemes Pydantic i validador base",
+                "body": "## 📝 Descripció i Història d'Usuari\nDefinir models i validadors.",
+                "depends_on_orders": [],
+                "deliverable_summary": "Mòdul d'esquemes independent amb tests unitaris al 100%.",
+            },
+        ],
+    }
+
+    mock_llm: Any = MagicMock()
+    mock_llm.generate_task_spec.return_value = json.dumps(multi_story_payload)
+
+    created_counter = {"n": 100}
+
+    def _fake_create_issue(title: str, body: str, labels: list[str] | None = None) -> dict[str, Any]:
+        created_counter["n"] += 1
+        num = created_counter["n"]
+        return {
+            "number": num,
+            "title": title,
+            "url": f"https://github.com/org/repo/issues/{num}",
+            "body": body,
+            "labels": labels or [],
+        }
+
+    mock_gh: Any = MagicMock()
+    mock_gh.create_issue.side_effect = _fake_create_issue
+
+    agent = AnalystAgent(llm_service=mock_llm, github_service=mock_gh)
+    result = agent.process_requirement_and_create_issue(
+        requirement="Sistema complet d'auditoria amb esquemes i CLI",
+        issue_title="Sistema d'Auditoria",
+    )
+
+    assert result["multi_story"] is True
+    assert result["stories_count"] == 2
+    assert len(result["issues"]) == 2
+    assert result["number"] == 101
+
+    # Verifica que s'han ordenat per execution_order (1 abans que 2)
+    seq = result["execution_sequence"]
+    assert seq[0]["step"] == 1
+    assert seq[0]["issue_number"] == 101
+    assert "Esquemes Pydantic" in seq[0]["title"]
+    assert seq[0]["depends_on_issues"] == []
+
+    assert seq[1]["step"] == 2
+    assert seq[1]["issue_number"] == 102
+    assert "Integració al menú CLI" in seq[1]["title"]
+    assert seq[1]["depends_on_issues"] == [101]
+
+    # Verifica que el cos de la segona Issue conté l'enllaç a la Issue #101 i les garanties d'abast tancat
+    second_call_kwargs = mock_gh.create_issue.call_args_list[1].kwargs
+    assert "[Story 2/2]" in second_call_kwargs["title"]
+    assert "Pla d'Execució Seqüencial i Abast Tancat" in second_call_kwargs["body"]
+    assert "Issue #101" in second_call_kwargs["body"]
+    assert "desenvolupament tancat" in second_call_kwargs["body"]
+
+    # Verifica el text de seqüència recomanada
+    assert "Issue #101" in result["recommended_sequence_text"]
+    assert "Issue #102" in result["recommended_sequence_text"]
+    assert "executar després de: #101" in result["recommended_sequence_text"]
+
+
+def test_developer_agent_extract_and_resolve_dependencies() -> None:
+    """Verifica l'extracció i resolució de dependències entre Stories obertes."""
+    from types import SimpleNamespace
+    from src.agents.developer_agent import DeveloperAgent
+
+    issue_101 = SimpleNamespace(
+        number=101,
+        title="[Story 1/3] Esquemes base",
+        body=(
+            "## 🔢 Pla d'Execució Seqüencial i Abast Tancat\n"
+            "- **Dependències Prèvies:** Cap (Primera Story de la seqüència — Base independent)\n"
+        ),
+    )
+    issue_102 = SimpleNamespace(
+        number=102,
+        title="[Story 2/3] Servei de negoci",
+        body=(
+            "## 🔢 Pla d'Execució Seqüencial i Abast Tancat\n"
+            "- **Dependències Prèvies:** Issue #101 ([Story 1/3] Esquemes base)\n"
+        ),
+    )
+    issue_103 = SimpleNamespace(
+        number=103,
+        title="[Story 3/3] Interfície CLI",
+        body=(
+            "## 🔢 Pla d'Execució Seqüencial i Abast Tancat\n"
+            "- **Dependències Prèvies:** Issue #102 ([Story 2/3] Servei de negoci)\n"
+        ),
+    )
+    open_issues = [issue_101, issue_102, issue_103]
+
+    assert DeveloperAgent.extract_issue_dependencies(issue_101.body) == []
+    assert DeveloperAgent.extract_issue_dependencies(issue_102.body) == [101]
+    assert DeveloperAgent.extract_issue_dependencies(issue_103.body) == [102]
+
+    status_101 = DeveloperAgent.resolve_dependency_status(issue_101, open_issues)
+    assert status_101["is_blocked"] is False
+    assert "Llista per desenvolupar" in DeveloperAgent.format_issue_dependency_badge(
+        issue_101, open_issues
+    )
+
+    # La 103 depèn de la 102, que alhora depèn de la 101 -> primera necessària és la 101
+    status_103 = DeveloperAgent.resolve_dependency_status(issue_103, open_issues)
+    assert status_103["is_blocked"] is True
+    assert status_103["pending_dependencies"] == [102]
+    assert status_103["first_required_issue"].number == 101
+    badge_103 = DeveloperAgent.format_issue_dependency_badge(issue_103, open_issues)
+    assert "Depèn de: #102" in badge_103
+    assert "cal desenvolupar primer #101" in badge_103
+
+    # Si la 101 ja s'ha tancat, la 102 passa a estar desbloquejada
+    open_after_101 = [issue_102, issue_103]
+    status_102_after = DeveloperAgent.resolve_dependency_status(issue_102, open_after_101)
+    assert status_102_after["is_blocked"] is False
+    assert "Dependències completades" in DeveloperAgent.format_issue_dependency_badge(
+        issue_102, open_after_101
+    )
+
+
+def test_prompt_issue_selection_blocks_dependent_story_and_returns_to_menu(
+    monkeypatch: Any, capsys: Any
+) -> None:
+    """Verifica que triar una Story amb dependències avisa l'usuari i torna al menú."""
+    from types import SimpleNamespace
+    from src.main import _prompt_issue_selection
+
+    issue_101 = SimpleNamespace(
+        number=101,
+        title="[Story 1/2] Base de dades",
+        body="- **Dependències Prèvies:** Cap\n",
+    )
+    issue_102 = SimpleNamespace(
+        number=102,
+        title="[Story 2/2] Endpoint API",
+        body="- **Dependències Prèvies:** Issue #101 ([Story 1/2] Base de dades)\n",
+    )
+    open_issues = [issue_101, issue_102]
+
+    # L'usuari intenta triar primer la 102 (bloquejada) i després tria la 101 (vàlida)
+    inputs = iter(["102", "101"])
+    monkeypatch.setattr("builtins.input", lambda _: next(inputs))
+
+    selected = _prompt_issue_selection(open_issues, "emasnou/test-repo")
+    assert selected == 101
+
+    captured = capsys.readouterr().out
+    assert "Depèn de: #101" in captured
+    assert "No es pot desenvolupar la Story #102" in captured
+    assert "Cal desenvolupar primer la Story #101: '[Story 1/2] Base de dades'" in captured
+    assert "Tornant al menú de selecció de Stories" in captured
+
+
+

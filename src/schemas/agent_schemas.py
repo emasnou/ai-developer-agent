@@ -178,3 +178,53 @@ class ImprovementsResponse(BaseModel):
     improvements: list[ImprovementItem] = Field(
         description="Llista de millores futures identificades"
     )
+
+
+class AnalystStoryItem(BaseModel):
+    """Representa una Story individual executable i autocontinguda dins del pla de l'Analista."""
+
+    execution_order: int = Field(
+        default=1,
+        description="Ordre d'execució seqüencial recomanat (començant per 1)",
+    )
+    title: str = Field(
+        description="Títol concís i descriptiu de la Story/Issue per a GitHub"
+    )
+    body: str = Field(
+        description="Especificació completa de la Story en format Markdown seguint la plantilla d'Issue"
+    )
+    depends_on_orders: list[int] = Field(
+        default_factory=list,
+        description="Llista d'ordres d'execució previs dels quals depèn aquesta Story (p.ex. [1])",
+    )
+    deliverable_summary: str = Field(
+        default="",
+        description=(
+            "Resum de l'abast tancat que lliura aquesta Story i com es verifica "
+            "amb PyTest sense dependre d'elements futurs ni deixar errors"
+        ),
+    )
+
+
+class AnalystPlan(BaseModel):
+    """Pla d'anàlisi funcional que pot descompondre un requeriment en una o múltiples Stories."""
+
+    requires_multiple_stories: bool = Field(
+        default=False,
+        description="True si el requeriment requereix més d'una Story per completar-se de forma segura",
+    )
+    decomposition_rationale: str = Field(
+        default="",
+        description=(
+            "Justificació de la necessitat de crear una o múltiples Stories i com es garanteix "
+            "que cada Story sigui un desenvolupament tancat i executable sense errors"
+        ),
+    )
+    execution_sequence_summary: str = Field(
+        default="",
+        description="Explicació de la seqüència d'execució recomanada entre les diferents Stories",
+    )
+    stories: list[AnalystStoryItem] = Field(
+        description="Llista ordenada seqüencialment de Stories que satisfan el requeriment"
+    )
+
