@@ -84,6 +84,15 @@ class AgentLogger:
         cls._instances[agent_name] = logger
         return logger
 
+    @classmethod
+    def reset(cls) -> None:
+        """Tanca tots els handlers actius i buida el registre d'instàncies singleton."""
+        for logger in cls._instances.values():
+            for handler in list(logger.handlers):
+                handler.close()
+                logger.removeHandler(handler)
+        cls._instances.clear()
+
 
 class StructuredAgentAdapter(logging.LoggerAdapter):
     """Adaptador per injectar automàticament l'`agent_id` en totes les crides de log."""
