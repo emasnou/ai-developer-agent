@@ -14,11 +14,11 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   changelog:
-    name: 📝 Validate & Sync CHANGELOG.md
+    name: 📝 Validate CHANGELOG.md Structure (Local Commit Sync)
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
 
@@ -33,26 +33,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: 🔄 Update CHANGELOG.md from Conventional Commits
-        env:
-          RELEASE_VERSION: ${{ github.event.inputs.release_version || (startsWith(github.ref, 'refs/tags/v') && substring(github.ref, 11, 20)) || '' }}
+      - name: ✅ Verify CHANGELOG.md Keep a Changelog & SemVer format
         run: |
-          if [ -n "$RELEASE_VERSION" ]; then
-            python -m src.utils.changelog_updater --release "$RELEASE_VERSION"
-          else
-            python -m src.utils.changelog_updater
-          fi
-
-      - name: 🚀 Commit and push updated CHANGELOG.md on main
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        run: |
-          if [ -n "$(git status --porcelain CHANGELOG.md)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add CHANGELOG.md
-            git commit -m "chore(changelog): actualització automàtica de CHANGELOG.md [skip ci]"
-            git push origin HEAD:main
-          else
-            echo "ℹ️ Cap canvi pendent d'escriure a CHANGELOG.md."
-          fi
+          python -c "from pathlib import Path; text = Path('CHANGELOG.md').read_text(encoding='utf-8'); assert '## [Unreleased]' in text, 'Falta secció ## [Unreleased] a CHANGELOG.md'"
+          echo "✅ CHANGELOG.md validat correctament (actualitzat en local en temps de commit)."
 

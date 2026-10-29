@@ -366,6 +366,16 @@ def update_all_documentation(root_dir: Path = Path(".")) -> list[str]:
 
     if sync_adr_index(adr_dir):
         updated_files.append("docs/adr/README.md")
+
+    hooks_dir = resolved_root / ".git" / "hooks"
+    for hook_name in ("pre-commit", "post-commit"):
+        hook_path = hooks_dir / hook_name
+        if hook_path.is_file():
+            try:
+                hook_path.chmod(0o755)
+            except OSError:
+                pass
+
     return updated_files
 
 

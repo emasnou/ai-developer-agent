@@ -67,3 +67,11 @@ resolve_tool_bin() {
 PYTHON_BIN="$(resolve_python_bin)"
 export PYTHONPATH="${PROJECT_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
+# Garanteix que els Git hooks locals de temps de commit tinguin permisos d'execució
+for hook_name in pre-commit post-commit; do
+    if [[ -f "${PROJECT_ROOT}/.git/hooks/${hook_name}" && ! -x "${PROJECT_ROOT}/.git/hooks/${hook_name}" ]]; then
+        chmod +x "${PROJECT_ROOT}/.git/hooks/${hook_name}" 2>/dev/null || true
+    fi
+done
+
+

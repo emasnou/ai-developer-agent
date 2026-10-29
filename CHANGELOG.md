@@ -18,6 +18,9 @@ El format es basa en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) i 
 - **Sincronització Documental Autònoma al `DeveloperAgent` (`src/agents/developer_agent.py`)**: Integració de `_sync_workspace_documentation` per actualitzar `docs/reference/index.md` i `docs/adr/README.md` automàticament a cada commit d'Issue o remediació de PR.
 - **Linter de Docstrings en CI (`pyproject.toml`, `.github/workflows/ci.yml`)**: Activació de les regles `D` (`pydocstyle` convenció `google`) a Ruff i gate obligatori `--validate-docstrings` a GitHub Actions.
 
+### Fixed
+- Moficació invàlida
+
 ---
 
 ## [0.3.0] - 2026-10-27

@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   pages: write
   id-token: write
 
@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   sync-and-build-docs:
-    name: 🔄 Sync API Reference, ADRs & Build MkDocs
+    name: 🔄 Validate Docs-as-Code & Build MkDocs
     runs-on: ubuntu-latest
     if: "!contains(github.event.head_commit.message, '[skip ci]')"
 
@@ -46,22 +46,9 @@ jobs:
         run: |
           python -m src.utils.doc_updater --validate-docstrings
 
-      - name: 🔄 Synchronize Reference Docs & ADR Index
+      - name: 🔄 Verify Reference Docs & ADR Index for Portal Build
         run: |
           python -m src.utils.doc_updater
-
-      - name: 💾 Auto-commit updated documentation on main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet docs/reference/index.md docs/adr/README.md; then
-            git add docs/reference/index.md docs/adr/README.md
-            git commit -m "docs(auto): sincronitza referència d'API i índex d'ADRs [skip ci]"
-            git push origin HEAD:main
-          else
-            echo "ℹ️ La documentació tècnica ja es troba sincronitzada."
-          fi
 
       - name: 🏗️ Build MkDocs Material Portal
         run: |

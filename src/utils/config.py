@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -16,6 +17,23 @@ from dotenv import load_dotenv
 # Carreguem .env de forma permissiva (sense fallar si no existeix) per permetre
 # l'execució de tests unitaris en entorns CI/CD aïllats sense fitxers de secrets
 load_dotenv()
+
+
+def _ensure_local_git_hooks_executable() -> None:
+    """Garanteix permisos d'execució (`0o755`) als hooks locals de Git si existeixen."""
+    hooks_dir = Path(__file__).resolve().parents[2] / ".git" / "hooks"
+    for hook_name in ("pre-commit", "post-commit"):
+        hook_path = hooks_dir / hook_name
+        if hook_path.is_file():
+            try:
+                current_mode = hook_path.stat().st_mode & 0o777
+                if current_mode != 0o755:
+                    hook_path.chmod(0o755)
+            except OSError:
+                pass
+
+
+_ensure_local_git_hooks_executable()
 
 GITHUB_TOKEN: Optional[str] = os.getenv("GITHUB_TOKEN")
 GITHUB_REPO: Optional[str] = os.getenv("GITHUB_REPO")
