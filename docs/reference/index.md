@@ -9,15 +9,18 @@
 | Mòdul | Fitxer | Responsabilitat Principal | Elements Públics |
 | :--- | :--- | :--- | :--- |
 | `src.agents.analyst_agent` | [`src/agents/analyst_agent.py`](../../src/agents/analyst_agent.py) | Agent Analista encarregat de transformar requeriments funcionals en una o múltiples Issues de GitHub. | `AnalystAgent` |
+| `src.agents.analytics_agent` | [`src/agents/analytics_agent.py`](../../src/agents/analytics_agent.py) | Agent Analític d'IA modular per al processament, inspecció i extracció d'insights de dades. | `AnalyticsValidationError`, `AnalyticsProcessingError`, `AnalyticsAgent` |
 | `src.agents.base_agent` | [`src/agents/base_agent.py`](../../src/agents/base_agent.py) | Classe base comuna per a tots els agents d'IA del sistema. | `BaseAgent` |
 | `src.agents.code_review_agent` | [`src/agents/code_review_agent.py`](../../src/agents/code_review_agent.py) | Agent CodeReview per auditar la qualitat del codi, el rendiment i la seguretat (OWASP Top 10). | `CodeReviewAgent` |
 | `src.agents.developer_agent` | [`src/agents/developer_agent.py`](../../src/agents/developer_agent.py) | Agent Desenvolupador per a la generació, validació amb PyTest i remediació de codi en workspaces aïllats. | `DeveloperAgent` |
 | `src.main` | [`src/main.py`](../../src/main.py) | Punt d'entrada de la interfície de línia d'ordres (CLI) per a l'Agent d'IA multi-repositori. | `handle_repository_selection`, `handle_analyst_option`, `handle_developer_option`, `handle_review_option`, `handle_remediation_option`, `main` |
 | `src.password_reset` | [`src/password_reset.py`](../../src/password_reset.py) | Mòdul per a la gestió segura del restabliment de contrasenyes. | `TokenValidationError`, `ExpiredTokenError`, `InvalidTokenError`, `PasswordValidationError`, `ResetTokenData`, `PasswordResetTokenManager`, `UserRepository`, `EmailService`, `RateLimiter`, `PasswordResetController`, `validate_email_format`, `validate_password_complexity` |
 | `src.prompts.analyst_prompts` | [`src/prompts/analyst_prompts.py`](../../src/prompts/analyst_prompts.py) | Plantilles de prompts de sistema per a l'Agent Analista (`AnalystAgent`). | `build_analyst_system_prompt` |
+| `src.prompts.analytics_prompts` | [`src/prompts/analytics_prompts.py`](../../src/prompts/analytics_prompts.py) | Plantilles de prompts de sistema per a l'Agent Analític d'IA (`AnalyticsAgent`). | *(Mòdul de constants)* |
 | `src.prompts.developer_prompts` | [`src/prompts/developer_prompts.py`](../../src/prompts/developer_prompts.py) | Plantilles de prompts de sistema, auto-correcció i remediació per a l'Agent Desenvolupador (`DeveloperAgent`). | *(Mòdul de constants)* |
 | `src.prompts.review_prompts` | [`src/prompts/review_prompts.py`](../../src/prompts/review_prompts.py) | Plantilles de prompts per a l'auditoria de codi i l'extracció de millores (`CodeReviewAgent`). | *(Mòdul de constants)* |
 | `src.schemas.agent_schemas` | [`src/schemas/agent_schemas.py`](../../src/schemas/agent_schemas.py) | Esquemes de dades Pydantic per a les sortides estructurades (Structured Outputs) dels agents. | `FileItem`, `ADRAlternative`, `ArchitectureDecisionRecord`, `DeveloperPlan`, `CodeReviewResponse`, `ImprovementItem`, `ImprovementsResponse`, `AnalystStoryItem`, `AnalystPlan` |
+| `src.schemas.analytics_schemas` | [`src/schemas/analytics_schemas.py`](../../src/schemas/analytics_schemas.py) | Esquemes Pydantic per a les consultes i respostes estructurades de l'AnalyticsAgent. | `AnalyticsMetric`, `AnalyticsInsight`, `AnalyticsQuery`, `AnalyticsResponse` |
 | `src.schemas.finops_schemas` | [`src/schemas/finops_schemas.py`](../../src/schemas/finops_schemas.py) | Esquemes Pydantic per a la gestió de telemetria de consum de tokens i costos FinOps. | `TokenUsage`, `PricingTier`, `CostBreakdown`, `CallMetricRecord`, `SessionSummary` |
 | `src.services.finops_service` | [`src/services/finops_service.py`](../../src/services/finops_service.py) | Servei de catàleg de preus i motor de càlcul de costos FinOps per a models de LLM. | `ModelPricingNotFoundError`, `FinOpsPricingCatalog`, `CostCalculator` |
 | `src.services.github_service` | [`src/services/github_service.py`](../../src/services/github_service.py) | Servei d'integració multi-repositori amb l'API de GitHub mitjançant PyGithub. | `GitHubService`, `validate_repo_name` |
@@ -41,6 +44,13 @@
 - **Resum:** Agent Analista encarregat de transformar requeriments funcionals en una o múltiples Issues de GitHub.
 
 ::: src.agents.analyst_agent
+
+### `src.agents.analytics_agent`
+
+- **Fitxer font:** [`src/agents/analytics_agent.py`](../../src/agents/analytics_agent.py)
+- **Resum:** Agent Analític d'IA modular per al processament, inspecció i extracció d'insights de dades.
+
+::: src.agents.analytics_agent
 
 ### `src.agents.base_agent`
 
@@ -84,6 +94,13 @@
 
 ::: src.prompts.analyst_prompts
 
+### `src.prompts.analytics_prompts`
+
+- **Fitxer font:** [`src/prompts/analytics_prompts.py`](../../src/prompts/analytics_prompts.py)
+- **Resum:** Plantilles de prompts de sistema per a l'Agent Analític d'IA (`AnalyticsAgent`).
+
+::: src.prompts.analytics_prompts
+
 ### `src.prompts.developer_prompts`
 
 - **Fitxer font:** [`src/prompts/developer_prompts.py`](../../src/prompts/developer_prompts.py)
@@ -104,6 +121,13 @@
 - **Resum:** Esquemes de dades Pydantic per a les sortides estructurades (Structured Outputs) dels agents.
 
 ::: src.schemas.agent_schemas
+
+### `src.schemas.analytics_schemas`
+
+- **Fitxer font:** [`src/schemas/analytics_schemas.py`](../../src/schemas/analytics_schemas.py)
+- **Resum:** Esquemes Pydantic per a les consultes i respostes estructurades de l'AnalyticsAgent.
+
+::: src.schemas.analytics_schemas
 
 ### `src.schemas.finops_schemas`
 
