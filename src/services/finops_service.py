@@ -182,7 +182,7 @@ class CostCalculator:
         self,
         model_name: str,
         usage: TokenUsage,
-        round_digits: int = 6,
+        round_digits: int = 10,
     ) -> CostBreakdown:
         """Calcula el cost econòmic exacte associat a una interacció amb un LLM.
 
@@ -195,7 +195,7 @@ class CostCalculator:
         Args:
             model_name: Nom o identificador del model utilitzat.
             usage: Dades estructurades del consum de tokens.
-            round_digits: Nombre de decimals per a l'arrodoniment monetari (per defecte 6).
+            round_digits: Nombre de decimals per a l'arrodoniment monetari (per defecte 10).
 
         Returns:
             CostBreakdown: Detall econòmic complet de la transacció.
@@ -237,13 +237,13 @@ class CostCalculator:
     def calculate_batch_cost(
         self,
         usages: list[tuple[str, TokenUsage]],
-        round_digits: int = 6,
+        round_digits: int = 10,
     ) -> list[CostBreakdown]:
         """Processa un lot de consums de tokens i retorna els costos associats de forma seqüencial.
 
         Args:
             usages: Llista de tuples (model_name, usage) a calcular.
-            round_digits: Precisió d'arrodoniment decimal.
+            round_digits: Precisió d'arrodoniment decimal (per defecte 10).
 
         Returns:
             list[CostBreakdown]: Llista de desglossaments econòmics corresponents.
