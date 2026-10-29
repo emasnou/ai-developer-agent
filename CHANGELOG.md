@@ -17,6 +17,7 @@ El format es basa en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) i 
 - **issue-29**: Resolució Issue #29 (Afegir exportació dels esquemes FinOps a src/schemas/__init__.py i implementar la suite completa de tests de validació de restriccions no negatives (ge=0) a TokenUsage i mètriques FinOps.)
 - **issue-23**: Resolució Issue #23 (Implementació del servei MetricsTracker per al seguiment de sessions, mesura de latències amb context managers, ràtios d'eficiència (TPS) i exportació d'informes FinOps.)
 - **issue-7**: Resolució Issue #7 (Integració de logs estructurats i monitoratge de seguretat a src/password_reset.py per a SIEM i detecció d'intrusions)
+- **issue-18**: Resolució Issue #18 (Afegit el mètode de neteja 'reset' a AgentLogger i implementada la fixture de neteja global a tests/unit/test_logger.py per garantir l'aïllament absolut entre tests.)
 
 ### Changed
 - **Sincronització Documental Autònoma al `DeveloperAgent` (`src/agents/developer_agent.py`)**: Integració de `_sync_workspace_documentation` per actualitzar `docs/reference/index.md` i `docs/adr/README.md` automàticament a cada commit d'Issue o remediació de PR.
